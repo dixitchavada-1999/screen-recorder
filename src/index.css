@@ -1,0 +1,124 @@
+@import 'tailwindcss';
+
+/*
+ * Design tokens. Tailwind v4 reads these directly, so `bg-surface`,
+ * `text-muted`, `border-hairline` and friends are available as utilities.
+ */
+@theme {
+  --color-canvas: #0b1020;
+  --color-canvas-elevated: #121933;
+  --color-surface: #161f3d;
+  --color-hairline: #26315a;
+
+  --color-ink: #eef2ff;
+  --color-muted: #94a3c8;
+  --color-faint: #64749c;
+
+  --color-accent: #6366f1;
+  --color-accent-strong: #818cf8;
+  --color-record: #ef4444;
+  --color-record-strong: #f87171;
+  --color-positive: #34d399;
+  --color-warning: #fbbf24;
+
+  --font-mono:
+    'JetBrains Mono', 'Cascadia Mono', 'SF Mono', Menlo, Consolas, monospace;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--color-canvas);
+    color: var(--color-ink);
+    font-family:
+      'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Ubuntu, Cantarell,
+      sans-serif;
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
+    /* A desktop app should not feel like a web page. */
+    user-select: none;
+    cursor: default;
+    overflow: hidden;
+  }
+
+  /* Text the user may legitimately want to copy (paths, versions). */
+  .selectable {
+    user-select: text;
+    cursor: text;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-accent-strong);
+    outline-offset: 2px;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-hairline);
+    border-radius: 999px;
+    border: 2px solid var(--color-canvas);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-faint);
+  }
+}
+
+@layer utilities {
+  /* Slow, low-cost pulse for the recording indicator. */
+  @keyframes recording-pulse {
+    0%,
+    100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+    50% {
+      opacity: 0.45;
+      transform: scale(0.88);
+    }
+  }
+
+  .animate-recording {
+    animation: recording-pulse 1.6s ease-in-out infinite;
+  }
+
+  @keyframes indeterminate-slide {
+    0% {
+      transform: translateX(-100%);
+    }
+    100% {
+      transform: translateX(300%);
+    }
+  }
+
+  .animate-indeterminate {
+    animation: indeterminate-slide 1.4s ease-in-out infinite;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .animate-recording,
+    .animate-indeterminate {
+      animation: none;
+    }
+  }
+
+  /*
+    Safari and older Chromium still paint their own disclosure triangle even
+    with `list-style: none`, which would sit beside the chevron we draw. This
+    removes it wherever `list-none` is used on a summary.
+  */
+  summary.list-none::-webkit-details-marker {
+    display: none;
+  }
+}

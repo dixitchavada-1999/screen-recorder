@@ -1,0 +1,57 @@
+{
+  "name": "screen-recorder",
+  "version": "1.1.1",
+  "description": "Lightweight OBS-like cross-platform screen recorder built with Electron, React, TypeScript and FFmpeg",
+  "author": {
+    "name": "Screen Recorder",
+    "email": "dave.dev90@gmail.com"
+  },
+  "license": "MIT",
+  "private": true,
+  "//homepage": "Required by electron-builder to produce a .deb package. Change to your real project URL before distributing.",
+  "homepage": "https://example.com/screen-recorder",
+  "main": "out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "start": "electron-vite preview",
+    "typecheck:node": "tsc -p tsconfig.node.json --noEmit",
+    "typecheck:web": "tsc -p tsconfig.web.json --noEmit",
+    "typecheck": "npm run typecheck:node && npm run typecheck:web",
+    "icon": "node scripts/generate-icon.mjs",
+    "build": "npm run typecheck && electron-vite build",
+    "prepack:dir": "npm run icon",
+    "prebuild:win": "npm run icon",
+    "prebuild:mac": "npm run icon",
+    "prebuild:linux": "npm run icon",
+    "prebuild:all": "npm run icon",
+    "pack:dir": "npm run build && electron-builder --dir",
+    "build:win": "npm run build && electron-builder --win --publish never",
+    "build:mac": "npm run build && electron-builder --mac --publish never",
+    "build:linux": "npm run build && electron-builder --linux --publish never",
+    "build:all": "npm run build && electron-builder --win --linux --publish never",
+    "//release:win": "Builds and uploads to GitHub Releases as a draft. Needs GH_TOKEN in the environment.",
+    "release:win": "npm run build && electron-builder --win --publish always",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.111.0",
+    "electron-updater": "^6.8.9",
+    "ffmpeg-static": "^5.3.0",
+    "uiohook-napi": "^1.5.5"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^5.2.0",
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^5.0.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.6"
+  }
+}

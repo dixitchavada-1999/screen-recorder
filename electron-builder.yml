@@ -1,0 +1,196 @@
+appId: com.screenrecorder.desktop
+productName: Screen Recorder
+copyright: Copyright © 2026 Screen Recorder
+
+directories:
+  output: release/${version}
+  buildResources: build
+
+# Only the compiled output ships. Source, configs and sourcemaps are excluded.
+files:
+  - out/**/*
+  - package.json
+  - '!**/*.map'
+  - '!**/node_modules/*/{test,__tests__,tests,example,examples,doc,docs}/**'
+  - '!**/node_modules/*/*.md'
+
+asar: true
+
+# The scheme email confirmation links come back on. Registering it here is what
+# lets the OS hand `screenrecorder://auth/callback#…` to the installed app;
+# `app.setAsDefaultProtocolClient` alone only covers the running process.
+protocols:
+  - name: Screen Recorder
+    schemes:
+      - screenrecorder
+
+# FFmpeg is a native executable and cannot be spawned from inside an asar
+# archive, so it is unpacked next to it. `ffmpeg-locator.ts` rewrites the path.
+asarUnpack:
+  - node_modules/ffmpeg-static/**
+  # `uiohook-napi` ships a `.node` binary, and the dynamic loader cannot open one
+  # from inside an asar archive any more than it can spawn an executable there.
+  - node_modules/uiohook-napi/**
+
+# An `ffmpeg/` folder placed beside the executable overrides the bundled binary.
+extraResources:
+  - from: ffmpeg
+    to: ffmpeg
+    filter:
+      - '**/*'
+  # The tray loads these at runtime, so they must ship inside resources/ rather
+  # than staying build-time-only assets. `trayTemplate*` is the macOS menu-bar
+  # glyph; nativeImage resolves the @2x file itself, so both have to be there.
+  - from: build/icon.png
+    to: build/icon.png
+  - from: build/trayTemplate.png
+    to: build/trayTemplate.png
+  - from: build/trayTemplate@2x.png
+    to: build/trayTemplate@2x.png
+
+# ---------------------------------------------------------------------------
+# Windows
+# ---------------------------------------------------------------------------
+win:
+  icon: build/icon.png
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+  artifactName: ${productName}-${version}-windows-${arch}.${ext}
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowElevation: true
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Screen Recorder
+  deleteAppDataOnUninstall: false
+  # Refuse to install over a running instance rather than corrupting it.
+  runAfterFinish: true
+
+portable:
+  artifactName: ${productName}-${version}-windows-portable.${ext}
+
+# ---------------------------------------------------------------------------
+# macOS
+#
+# Must be built ON macOS: the .app bundle, the .icns icon and the .dmg image
+# are all produced by macOS-only tooling (codesign, hdiutil). Windows and Linux
+# hosts cannot cross-build this section.
+# ---------------------------------------------------------------------------
+mac:
+  icon: build/icon.png
+  category: public.app-category.video
+  # Both silicon generations. Intel Macs get x64, Apple Silicon gets arm64.
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+    - target: zip
+      arch: [arm64, x64]
+  artifactName: ${productName}-${version}-mac-${arch}.${ext}
+
+  # Required from macOS 10.15 onwards for anything Apple will notarise.
+  hardenedRuntime: true
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.inherit.plist
+
+  # Ad-hoc signing: produces an installable build with no Apple Developer
+  # account. The first launch needs right-click -> Open, or:
+  #   xattr -cr "/Applications/Screen Recorder.app"
+  # Replace with your "Developer ID Application: …" identity to ship signed.
+  identity: null
+
+  # Permission prompts. macOS kills the app instead of asking when the matching
+  # key is missing, so every capture path the recorder uses is declared here.
+  extendInfo:
+    NSMicrophoneUsageDescription: >
+      Screen Recorder needs the microphone to record your voice alongside the
+      screen.
+    NSCameraUsageDescription: >
+      Screen Recorder needs the camera only if you add a camera overlay to a
+      recording.
+    NSAppleEventsUsageDescription: >
+      Screen Recorder uses system events to control recording from the menu bar.
+    # Screen capture itself is granted through System Settings ->
+    # Privacy & Security -> Screen Recording, not through a usage string.
+    LSMinimumSystemVersion: '11.0'
+
+dmg:
+  artifactName: ${productName}-${version}-mac-${arch}.${ext}
+  # The familiar drag-to-Applications window.
+  contents:
+    - x: 140
+      y: 200
+      type: file
+    - x: 400
+      y: 200
+      type: link
+      path: /Applications
+
+# ---------------------------------------------------------------------------
+# Linux (Ubuntu)
+# ---------------------------------------------------------------------------
+linux:
+  icon: build/icon.png
+  category: AudioVideo
+  synopsis: Lightweight screen recorder with system and microphone audio
+  description: >
+    Records the full screen or a single window to MP4, capturing system audio
+    and the microphone together. Built with Electron and FFmpeg.
+  target:
+    - target: AppImage
+      arch: [x64]
+    - target: deb
+      arch: [x64]
+  artifactName: ${productName}-${version}-linux-${arch}.${ext}
+  desktop:
+    entry:
+      Name: Screen Recorder
+      Comment: Record your screen with system and microphone audio
+      Categories: AudioVideo;Recorder;
+      StartupWMClass: Screen Recorder
+      # Tells the desktop environment this app owns screenrecorder:// links.
+      # Without it the browser has nothing to hand an email confirmation to.
+      MimeType: x-scheme-handler/screenrecorder;
+
+deb:
+  # Runtime libraries Electron and screen capture need on a clean Ubuntu.
+  depends:
+    - libgtk-3-0
+    - libnotify4
+    - libnss3
+    - libxss1
+    - libxtst6
+    - xdg-utils
+    - libatspi2.0-0
+    - libsecret-1-0
+  # Recommended rather than required: the app ships its own FFmpeg binary, and
+  # PipeWire/portal packages are only needed on Wayland sessions.
+  recommends:
+    - ffmpeg
+    - xdg-desktop-portal
+    - xdg-desktop-portal-gtk
+
+appImage:
+  artifactName: ${productName}-${version}-linux-${arch}.${ext}
+
+# ---------------------------------------------------------------------------
+# Updates
+#
+# The application asks this repository's releases whether a newer version has
+# been published, and the dashboard offers it. `latest.yml` is written beside
+# the installer by electron-builder and is the file the check actually reads -
+# an installer uploaded without it is invisible to every running copy.
+#
+# The repository has to be public. A private one would mean shipping a GitHub
+# token inside the application, which is the same as publishing it.
+# ---------------------------------------------------------------------------
+
+publish:
+  provider: github
+  owner: Dixit-Chavada-1999
+  repo: call-recorder

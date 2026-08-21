@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      Content Security Policy for the renderer.
+      `blob:` is required because MediaRecorder output and source thumbnails are
+      handed to the page as blob/data URLs. No remote origin is permitted.
+    -->
+    <!--
+      `img-src` allows Supabase storage because the admin activity view renders
+      screenshots from signed, time-limited URLs. Scoped to that host rather
+      than opened to `https:` — nothing else in this window loads a remote
+      image, and `connect-src` stays closed, so the renderer still cannot talk
+      to the network on its own.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: app-recording: https://*.supabase.co; media-src 'self' blob: app-recording:; font-src 'self' data:; connect-src 'self' app-recording:"
+    />
+    <title>Screen Recorder</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
