@@ -175,6 +175,7 @@ export function RecorderPage({
       <PermissionBanner
         permissions={permissions.permissions}
         microphoneWanted={settings.audio.microphoneEnabled}
+        trackingEnabled={settings.tracking.enabled}
         onOpenSettings={(kind) => void permissions.openSettings(kind)}
         onRecheck={() => {
           void permissions.refresh()

@@ -1,9 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { KpiNote, UserRole } from '@shared/types'
 import { REMINDER_LEAD_OPTIONS } from '@shared/presets'
 import { Avatar } from '@/components/AuthDialog'
-import { GoogleAccounts } from '@/components/GoogleAccounts'
 import { KpiDialog } from '@/components/KpiDialog'
 import { UpdateBanner } from '@/components/UpdateBanner'
 import { Button } from '@/components/ui/Button'
@@ -13,10 +12,12 @@ import { Tooltip } from '@/components/ui/Tooltip'
 import { useAuth } from '@/context/AuthContext'
 import { useSettings } from '@/context/SettingsContext'
 import { useToast } from '@/context/ToastContext'
-import { useAppInfo } from '@/hooks/useAppInfo'
 import { useAppUpdate } from '@/hooks/useAppUpdate'
 import { useKpiNotes } from '@/hooks/useKpiNotes'
+import { useTasksDueToday } from '@/hooks/useTasksDueToday'
 import { CallManager } from '@/pages/CallManager'
+import { RolesPage } from '@/pages/RolesPage'
+import { TaskManager } from '@/pages/TaskManager'
 import { UserActivity } from '@/pages/UserActivity'
 import { AuthError } from '@/services/auth'
 import { toSerializedError } from '@/services/ipc'
@@ -26,29 +27,46 @@ import { cn } from '@/utils/cn'
 type Section =
   | 'dashboard'
   | 'calls'
-  | 'calendars'
+  | 'tasks'
   | 'activity'
+  | 'roles'
   | 'settings'
   | 'profile'
 
 interface SectionDefinition {
   id: Section
   label: string
-  hint: string
   /** Only shown to a super admin. The server refuses the data regardless. */
   adminOnly?: boolean
+  /**
+   * Only shown to somebody holding this permission.
+   *
+   * The newer of the two, and the one to reach for: `adminOnly` is a role test,
+   * and two people on the same role can need different answers. Either way the
+   * menu is a courtesy — the database refuses what it refuses.
+   */
+  permission?: string
 }
 
 const SECTIONS: ReadonlyArray<SectionDefinition> = [
-  { id: 'dashboard', label: 'Dashboard', hint: 'Your OKRs and notes' },
-  { id: 'calls', label: 'Call Manager', hint: 'Your calendar and schedule' },
-  { id: 'calendars', label: 'Calendars', hint: 'Connected Google accounts' },
-  { id: 'activity', label: 'User activity', hint: 'Who is tracked, and their days', adminOnly: true },
-  { id: 'settings', label: 'Settings', hint: 'Reminders and sessions' },
-  { id: 'profile', label: 'Profile', hint: 'Account details and sign out' }
+  { id: 'dashboard', label: 'Dashboard' },
+  { id: 'calls', label: 'Calendar' },
+  { id: 'tasks', label: 'Task Manager', permission: 'tasks.view' },
+  { id: 'activity', label: 'Team', adminOnly: true },
+  { id: 'roles', label: 'Roles', permission: 'roles.view' },
+  { id: 'settings', label: 'Settings' },
+  { id: 'profile', label: 'Profile' }
 ]
 
 interface AccountPageProps {
+  /**
+   * A screen something outside the window has asked for — the tray's
+   * "Open Calendar", and anything like it later.
+   *
+   * Carries the moment it was asked, so asking twice for the same screen counts
+   * twice. Ignored when it names something this account cannot see.
+   */
+  sectionRequest?: { section: string; at: number } | null
   /** Called after signing out, to leave a page that is no longer reachable. */
   onSignedOut: () => void
 }
@@ -61,10 +79,12 @@ interface AccountPageProps {
  * have to be asked for. It stays truthful offline, which the rest of the app
  * also manages to be.
  */
-export function AccountPage({ onSignedOut }: AccountPageProps): React.JSX.Element | null {
-  const { user, signOut } = useAuth()
+export function AccountPage({
+  sectionRequest,
+  onSignedOut
+}: AccountPageProps): React.JSX.Element | null {
+  const { user, signOut, can } = useAuth()
   const { push } = useToast()
-  const appInfo = useAppInfo()
   const [section, setSection] = useState<Section>('dashboard')
   const [signingOut, setSigningOut] = useState(false)
 
@@ -73,7 +93,21 @@ export function AccountPage({ onSignedOut }: AccountPageProps): React.JSX.Elemen
   if (!user) return null
 
   const isSuperAdmin = user.role === 'super_admin'
-  const visibleSections = SECTIONS.filter((item) => !item.adminOnly || isSuperAdmin)
+  /*
+   * Honoured only if the screen is one this account is actually offered — a
+   * request from outside is a request, not an override, and the menu is already
+   * filtered by what this person may see.
+   */
+  useEffect(() => {
+    if (!sectionRequest) return
+    const wanted = SECTIONS.find((item) => item.id === sectionRequest.section)
+    if (wanted) setSection(wanted.id)
+  }, [sectionRequest])
+
+  const visibleSections = SECTIONS.filter(
+    (item) =>
+      (!item.adminOnly || isSuperAdmin) && (!item.permission || can(item.permission))
+  )
 
   const handleSignOut = async (): Promise<void> => {
     setSigningOut(true)
@@ -87,7 +121,7 @@ export function AccountPage({ onSignedOut }: AccountPageProps): React.JSX.Elemen
   }
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[13rem_1fr]">
+    <div className="grid grid-cols-[11rem_1fr] gap-4 sm:grid-cols-[13rem_1fr]">
       {/* ------------------------------- Menu ------------------------------- */}
       <nav className="h-fit rounded-2xl border border-hairline bg-canvas-elevated/70 p-2">
         <div className="flex items-center gap-2.5 px-2 py-2.5">
@@ -120,7 +154,6 @@ export function AccountPage({ onSignedOut }: AccountPageProps): React.JSX.Elemen
                 )}
               >
                 <span className="block text-sm font-medium">{item.label}</span>
-                <span className="mt-0.5 block text-[11px] text-faint">{item.hint}</span>
               </button>
             </li>
           ))}
@@ -146,15 +179,18 @@ export function AccountPage({ onSignedOut }: AccountPageProps): React.JSX.Elemen
       </nav>
 
       {/* ------------------------------ Content ----------------------------- */}
-      <div>
+      {/* `min-w-0`: without it a wide child — a table, a long note — grows the
+          column instead of scrolling, and pushes the menu off the window. */}
+      <div className="min-w-0">
         {section === 'dashboard' && <Dashboard />}
         {section === 'calls' && <CallManager />}
-        {section === 'calendars' && <GoogleAccounts configured={appInfo?.googleConfigured ?? false} />}
+        {section === 'tasks' && can('tasks.view') && <TaskManager />}
         {/*
           Guarded on the role as well as on the menu: landing here by any other
           route — a stale state, a future deep link — must not render it.
         */}
         {section === 'activity' && isSuperAdmin && <UserActivity />}
+        {section === 'roles' && can('roles.view') && <RolesPage />}
         {section === 'settings' && <AccountSettings currentName={user.name} />}
         {section === 'profile' && (
           <Profile name={user.name} email={user.email} id={user.id} role={user.role} />
@@ -179,8 +215,100 @@ export function AccountPage({ onSignedOut }: AccountPageProps): React.JSX.Elemen
  * are a super admin's, and the database refuses both from anybody else whatever
  * this page renders.
  */
+/**
+ * The tasks falling due today.
+ *
+ * Renders nothing at all on a day with none — an empty "nothing due today" card
+ * is a permanent strip of screen saying nothing, and the dashboard is the one
+ * place where that is most expensive.
+ *
+ * Whose tasks these are is not decided here. The same policy that shapes a
+ * board shapes this: a member of staff sees their own, and somebody who can see
+ * every project sees the whole day.
+ */
+function DueToday(): React.JSX.Element | null {
+  const { tasks, loading, error } = useTasksDueToday()
+
+  /*
+   * Nothing due and nothing readable are different things, and only the first
+   * of them is silence. A failure that renders as an ordinary quiet day is a
+   * failure nobody reports, because there is nothing to report.
+   */
+  if (error) {
+    return (
+      <Card title="Due today">
+        <p className="rounded-xl border border-warning/40 bg-warning/10 px-3 py-2 text-xs leading-relaxed text-warning">
+          {error.message}
+          {error.hint ? ` — ${error.hint}` : ''}
+        </p>
+      </Card>
+    )
+  }
+
+  if (loading || tasks.length === 0) return null
+
+  return (
+    <Card
+      title="Due today"
+      description={`${tasks.length} ${tasks.length === 1 ? 'task is' : 'tasks are'} due before the day is out`}
+    >
+      <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {tasks.map((task) => {
+          const due = task.dueAt ? new Date(task.dueAt) : null
+
+          return (
+            <li
+              key={task.id}
+              className="flex flex-col gap-2 rounded-xl border border-hairline bg-surface/60 p-4"
+            >
+              <p className="line-clamp-2 break-words text-sm font-medium leading-snug text-ink">
+                {task.title}
+              </p>
+
+              {/*
+                The description, when there is one. A title alone often does not
+                say enough to act on, and this card exists to be acted on today.
+              */}
+              {task.description && (
+                <p className="line-clamp-3 whitespace-pre-wrap break-words text-xs leading-relaxed text-muted">
+                  {task.description}
+                </p>
+              )}
+
+              <div className="flex flex-wrap items-center gap-1.5">
+                {/*
+                  The date, not the hour. A due date is a day — the instant
+                  stored behind it is an implementation detail, and showing it
+                  invited people to read a deadline into a time nobody set.
+                */}
+                {due && (
+                  <span className="rounded-md border border-hairline px-1.5 py-0.5 text-[10px] text-muted">
+                    {due.toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' })}
+                  </span>
+                )}
+
+                {task.priority !== 'normal' && (
+                  <span className="rounded-md border border-hairline px-1.5 py-0.5 text-[10px] capitalize text-muted">
+                    {task.priority}
+                  </span>
+                )}
+              </div>
+
+              <p className="mt-auto truncate text-[11px] text-faint">
+                {task.boardName}
+                {task.assignees.length > 0 &&
+                  ` · ${task.assignees.map((person) => person.name).join(', ')}`}
+              </p>
+            </li>
+          )
+        })}
+      </ul>
+    </Card>
+  )
+}
+
 function Dashboard(): React.JSX.Element {
-  const { user } = useAuth()
+  const { user, can } = useAuth()
   const { notes, loading, error, refresh, create, remove } = useKpiNotes()
   const update = useAppUpdate()
   const { push } = useToast()
@@ -257,7 +385,7 @@ function Dashboard(): React.JSX.Element {
           was set, since the audience there is only ever themselves.
         */}
         {notes.length > 0 && isSuperAdmin && (
-          <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             {notes.map((note) => (
               <li
                 key={note.id}
@@ -329,6 +457,16 @@ function Dashboard(): React.JSX.Element {
           </ul>
         )}
       </Card>
+
+      {/*
+        Under the OKRs, and only on a day that has any.
+
+        The dashboard is what somebody opens the account area onto, and the OKRs
+        are what it is for — so they keep the top. What is due today is a strip
+        beneath them, present when there is something in it and absent when
+        there is not.
+      */}
+      {can('tasks.view') && <DueToday />}
 
       {isSuperAdmin && (
         <KpiDialog
@@ -456,8 +594,117 @@ function WindowSettings(): React.JSX.Element {
         label="Show in taskbar"
         description="Adds a taskbar button for the window. The tray icon stays either way."
       />
+
+      <div className="mt-4 border-t border-hairline pt-4">
+        <ShortcutField
+          value={settings.shortcuts.toggleRecording}
+          onChange={(toggleRecording) => updateSettings({ shortcuts: { toggleRecording } })}
+        />
+      </div>
     </Card>
   )
+}
+
+/**
+ * The key that starts and stops a recording from anywhere on the machine.
+ *
+ * Captured by pressing it rather than typed, because the thing being asked for
+ * is a key combination and the only unambiguous way to name one is to press it.
+ * Typing `Ctrl+Space` into a box means writing the accelerator syntax correctly
+ * and finding out it was wrong only when it silently fails to bind.
+ *
+ * Worth knowing, and said on screen: a global key is taken from every other
+ * application while this one runs. Ctrl+Space is what Windows uses to switch
+ * input methods and what most editors use for autocomplete.
+ */
+function ShortcutField({
+  value,
+  onChange
+}: {
+  value: string
+  onChange: (accelerator: string) => void
+}): React.JSX.Element {
+  const [capturing, setCapturing] = useState(false)
+
+  return (
+    <>
+      <p className="text-sm font-medium text-ink">Start and stop recording</p>
+      <p className="mt-0.5 text-xs leading-relaxed text-muted">
+        Works anywhere on this machine, with the app in the tray — and takes the key from every
+        other application while it runs.
+      </p>
+
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setCapturing(true)}
+          onBlur={() => setCapturing(false)}
+          onKeyDown={(event) => {
+            if (!capturing) return
+            event.preventDefault()
+
+            if (event.key === 'Escape') {
+              setCapturing(false)
+              return
+            }
+
+            const accelerator = toAccelerator(event)
+            if (!accelerator) return
+
+            onChange(accelerator)
+            setCapturing(false)
+          }}
+          className={cn(
+            'min-w-40 rounded-xl border px-3 py-2 font-mono text-sm transition-colors',
+            capturing
+              ? 'border-accent bg-surface text-accent-strong'
+              : 'border-hairline bg-surface text-ink hover:border-faint'
+          )}
+        >
+          {capturing ? 'Press the keys…' : readableAccelerator(value) || 'None'}
+        </button>
+
+        {value && !capturing && (
+          <Button size="sm" variant="ghost" onClick={() => onChange('')}>
+            Turn off
+          </Button>
+        )}
+      </div>
+    </>
+  )
+}
+
+/**
+ * A key press as Electron's accelerator syntax, or null while it is only a
+ * modifier.
+ *
+ * Modifiers arrive as key presses of their own, and binding "Control" alone
+ * would swallow every shortcut on the machine — so a press without a real key
+ * beside it is ignored rather than accepted.
+ */
+function toAccelerator(event: React.KeyboardEvent): string | null {
+  const parts: string[] = []
+  if (event.ctrlKey) parts.push('Control')
+  if (event.altKey) parts.push('Alt')
+  if (event.shiftKey) parts.push('Shift')
+  if (event.metaKey) parts.push('Super')
+
+  const key = event.key
+
+  if (['Control', 'Alt', 'Shift', 'Meta', 'OS'].includes(key)) return null
+
+  // Electron names the space bar rather than taking the character itself.
+  const named = key === ' ' ? 'Space' : key.length === 1 ? key.toUpperCase() : key
+
+  // A bare letter would bind that letter across the whole machine.
+  if (parts.length === 0) return null
+
+  return [...parts, named].join('+')
+}
+
+/** The same thing, as somebody would read it out. */
+function readableAccelerator(accelerator: string): string {
+  return accelerator.replace(/Control/g, 'Ctrl').replace(/\+/g, ' + ')
 }
 
 /**

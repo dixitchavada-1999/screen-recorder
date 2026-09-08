@@ -4,6 +4,7 @@ import type { DeepPartial } from '@shared/api'
 import type {
   ActivityDay,
   AppInfo,
+  AppRole,
   CallScope,
   RosterPerson,
   AppSettings,
@@ -12,8 +13,15 @@ import type {
   GoogleAccount,
   GoogleCalendarSyncResult,
   KpiNote,
+  TaskBoard,
+  TaskBoardDetail,
+  TaskCardInput,
+  TaskCardMove,
+  TaskDueToday,
+  TaskNote,
   LogPayload,
   MediaPermissions,
+  PermissionInfo,
   PermissionKind,
   RecorderStateSync,
   ScheduledCallInput,
@@ -22,7 +30,8 @@ import type {
   SignInInput,
   TrackedPerson,
   TrackingPolicy,
-  UpdateStatus
+  UpdateStatus,
+  UserPermission
 } from '@shared/types'
 import { isGoogleConfigured } from '../config/google'
 import { handled } from '../lib/errors'
@@ -44,6 +53,36 @@ import {
   updateCall
 } from '../services/calls'
 import { createKpiNote, deleteKpiNote, listKpiNotes } from '../services/kpi'
+import {
+  createRole,
+  deleteRole,
+  listPermissions,
+  listRoles,
+  listUserPermissions,
+  renameRole,
+  setRolePermissions,
+  setUserPermissions,
+  setUserRole
+} from '../services/roles'
+import {
+  addCardNote,
+  createBoard,
+  createCard,
+  createList,
+  deleteBoard,
+  deleteCard,
+  deleteCardNote,
+  deleteList,
+  listBoards,
+  listCardNotes,
+  listTasksDueToday,
+  moveCard,
+  readBoard,
+  renameBoard,
+  renameList,
+  setBoardMembers,
+  updateCard
+} from '../services/tasks'
 import { refreshReminderPrefs, resetReminderPrefs } from '../services/reminder-prefs'
 import { requestRosterSync } from '../services/roster'
 import {
@@ -80,6 +119,7 @@ import {
 import {
   getMediaPermissions,
   openPrivacySettings,
+  requestAccessibilityAccess,
   requestMicrophoneAccess
 } from '../services/permissions'
 import { settingsStore } from '../services/settings-store'
@@ -90,6 +130,7 @@ import {
   updateStatus
 } from '../services/updater'
 import { listCaptureSources, resolveCaptureSource } from '../services/sources'
+import { updateShortcutState } from '../services/shortcuts'
 import { updateTrayState } from '../services/tray'
 import { hideMainWindow, setCaptureExclusion } from '../window'
 
@@ -214,9 +255,16 @@ export function registerIpcHandlers(): void {
   )
 
   ipcMain.handle(
+    IPC.PERMISSIONS_REQUEST_ACCESSIBILITY,
+    handled(SCOPE, (): MediaPermissions => requestAccessibilityAccess())
+  )
+
+  ipcMain.handle(
     IPC.PERMISSIONS_OPEN_SETTINGS,
     handled(SCOPE, (_event: Electron.IpcMainInvokeEvent, kind: PermissionKind) =>
-      openPrivacySettings(kind === 'microphone' ? 'microphone' : 'screen')
+      openPrivacySettings(
+        kind === 'microphone' || kind === 'accessibility' ? kind : 'screen'
+      )
     )
   )
 
@@ -408,6 +456,188 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC.KPI_DELETE,
     handled(SCOPE, (_event: Electron.IpcMainInvokeEvent, id: string) => deleteKpiNote(id))
+  )
+
+  ipcMain.handle(
+    IPC.TASKS_NOTES,
+    handled(
+      SCOPE,
+      (_event: Electron.IpcMainInvokeEvent, cardId: string): Promise<TaskNote[]> =>
+        listCardNotes(String(cardId))
+    )
+  )
+
+  ipcMain.handle(
+    IPC.TASKS_NOTE_ADD,
+    handled(SCOPE, (_event: Electron.IpcMainInvokeEvent, cardId: string, body: string) =>
+      addCardNote(String(cardId), String(body))
+    )
+  )
+
+  ipcMain.handle(
+    IPC.TASKS_NOTE_DELETE,
+    handled(SCOPE, (_event: Electron.IpcMainInvokeEvent, noteId: string) =>
+      deleteCardNote(String(noteId))
+    )
+  )
+
+  /* ------------------------- Roles and permissions ------------------------- */
+
+  ipcMain.handle(
+    IPC.ROLES_LIST,
+    handled(SCOPE, (): Promise<AppRole[]> => listRoles())
+  )
+
+  ipcMain.handle(
+    IPC.ROLES_CATALOGUE,
+    handled(SCOPE, (): Promise<PermissionInfo[]> => listPermissions())
+  )
+
+  ipcMain.handle(
+    IPC.ROLES_CREATE,
+    handled(SCOPE, (_event: Electron.IpcMainInvokeEvent, label: string) => createRole(String(label)))
+  )
+
+  ipcMain.handle(
+    IPC.ROLES_RENAME,
+    handled(SCOPE, (_event: Electron.IpcMainInvokeEvent, key: string, label: string) =>
+      renameRole(String(key), String(label))
+    )
+  )
+
+  ipcMain.handle(
+    IPC.ROLES_DELETE,
+    handled(SCOPE, (_event: Electron.IpcMainInvokeEvent, key: string) => deleteRole(String(key)))
+  )
+
+  ipcMain.handle(
+    IPC.ROLES_SET_PERMISSIONS,
+    handled(SCOPE, (_event: Electron.IpcMainInvokeEvent, key: string, permissions: string[]) =>
+      setRolePermissions(String(key), Array.isArray(permissions) ? permissions : [])
+    )
+  )
+
+  ipcMain.handle(
+    IPC.ROLES_SET_USER,
+    handled(SCOPE, (_event: Electron.IpcMainInvokeEvent, userId: string, roleKey: string) =>
+      setUserRole(String(userId), String(roleKey))
+    )
+  )
+
+  ipcMain.handle(
+    IPC.ROLES_USER_PERMISSIONS,
+    handled(
+      SCOPE,
+      (_event: Electron.IpcMainInvokeEvent, userId: string): Promise<UserPermission[]> =>
+        listUserPermissions(String(userId))
+    )
+  )
+
+  ipcMain.handle(
+    IPC.ROLES_SET_USER_PERMISSIONS,
+    handled(
+      SCOPE,
+      (_event: Electron.IpcMainInvokeEvent, userId: string, overrides: UserPermission[]) =>
+        setUserPermissions(String(userId), Array.isArray(overrides) ? overrides : [])
+    )
+  )
+
+  /* ------------------------------ Task boards ------------------------------ */
+
+  ipcMain.handle(
+    IPC.TASKS_BOARDS,
+    handled(SCOPE, (): Promise<TaskBoard[]> => listBoards())
+  )
+
+  ipcMain.handle(
+    IPC.TASKS_BOARD,
+    handled(
+      SCOPE,
+      (_event: Electron.IpcMainInvokeEvent, boardId: string): Promise<TaskBoardDetail> =>
+        readBoard(String(boardId))
+    )
+  )
+
+  ipcMain.handle(
+    IPC.TASKS_DUE_TODAY,
+    handled(SCOPE, (): Promise<TaskDueToday[]> => listTasksDueToday())
+  )
+
+  ipcMain.handle(
+    IPC.TASKS_BOARD_CREATE,
+    handled(SCOPE, (_event: Electron.IpcMainInvokeEvent, name: string) =>
+      createBoard(String(name))
+    )
+  )
+
+  ipcMain.handle(
+    IPC.TASKS_BOARD_RENAME,
+    handled(SCOPE, (_event: Electron.IpcMainInvokeEvent, boardId: string, name: string) =>
+      renameBoard(String(boardId), String(name))
+    )
+  )
+
+  ipcMain.handle(
+    IPC.TASKS_BOARD_DELETE,
+    handled(SCOPE, (_event: Electron.IpcMainInvokeEvent, boardId: string) =>
+      deleteBoard(String(boardId))
+    )
+  )
+
+  ipcMain.handle(
+    IPC.TASKS_BOARD_MEMBERS,
+    handled(SCOPE, (_event: Electron.IpcMainInvokeEvent, boardId: string, nexusIds: string[]) =>
+      setBoardMembers(String(boardId), Array.isArray(nexusIds) ? nexusIds : [])
+    )
+  )
+
+  ipcMain.handle(
+    IPC.TASKS_LIST_CREATE,
+    handled(SCOPE, (_event: Electron.IpcMainInvokeEvent, boardId: string, name: string) =>
+      createList(String(boardId), String(name))
+    )
+  )
+
+  ipcMain.handle(
+    IPC.TASKS_LIST_RENAME,
+    handled(SCOPE, (_event: Electron.IpcMainInvokeEvent, listId: string, name: string) =>
+      renameList(String(listId), String(name))
+    )
+  )
+
+  ipcMain.handle(
+    IPC.TASKS_LIST_DELETE,
+    handled(SCOPE, (_event: Electron.IpcMainInvokeEvent, listId: string) =>
+      deleteList(String(listId))
+    )
+  )
+
+  ipcMain.handle(
+    IPC.TASKS_CARD_CREATE,
+    handled(SCOPE, (_event: Electron.IpcMainInvokeEvent, listId: string, input: TaskCardInput) =>
+      createCard(String(listId), input)
+    )
+  )
+
+  ipcMain.handle(
+    IPC.TASKS_CARD_UPDATE,
+    handled(SCOPE, (_event: Electron.IpcMainInvokeEvent, cardId: string, input: TaskCardInput) =>
+      updateCard(String(cardId), input)
+    )
+  )
+
+  ipcMain.handle(
+    IPC.TASKS_CARD_MOVE,
+    handled(SCOPE, (_event: Electron.IpcMainInvokeEvent, cardId: string, move: TaskCardMove) =>
+      moveCard(String(cardId), move)
+    )
+  )
+
+  ipcMain.handle(
+    IPC.TASKS_CARD_DELETE,
+    handled(SCOPE, (_event: Electron.IpcMainInvokeEvent, cardId: string) =>
+      deleteCard(String(cardId))
+    )
   )
 
   /* ------------------------------ Call manager ----------------------------- */
@@ -604,6 +834,9 @@ export function registerIpcHandlers(): void {
   ipcMain.on(IPC.RECORDER_STATE_SYNC, (_event, state: RecorderStateSync) => {
     if (!state || typeof state.state !== 'string') return
     updateTrayState(state)
+    // The global key needs the same answer the tray does: one press means start
+    // or stop depending on what is already happening.
+    updateShortcutState(state)
   })
 
   ipcMain.on(IPC.WINDOW_HIDE, () => {

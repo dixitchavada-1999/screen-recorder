@@ -6,11 +6,23 @@ import { logger } from '../lib/logger'
 
 const SCOPE = 'updater'
 
-/** First check, once the window has had a moment to itself. */
-const FIRST_CHECK_DELAY_MS = 15 * 1000
+/**
+ * First check, once the window has had a moment to itself.
+ *
+ * Short: the banner is the only way anybody learns a new version exists, and a
+ * quarter of a minute of a window that looks up to date is long enough to be
+ * read as "there is nothing".
+ */
+const FIRST_CHECK_DELAY_MS = 2 * 1000
 
-/** And again this often, for a machine that stays open for days. */
-const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000
+/**
+ * And again this often, for a machine that stays open for days.
+ *
+ * Half an hour rather than six: a release published mid-morning should reach
+ * people that morning. The check costs one small request and, when there is
+ * nothing new, changes nothing on screen.
+ */
+const CHECK_INTERVAL_MS = 30 * 60 * 1000
 
 /**
  * Keeps the application up to date, at the user's pace.
@@ -55,12 +67,38 @@ export function initUpdater(): void {
     return
   }
 
-  // The user presses the buttons; nothing installs itself behind them.
+  /*
+   * Nothing moves until somebody presses Upgrade.
+   *
+   * A hundred-odd megabytes is not a thing to spend on a machine's connection
+   * without being asked — somebody on a phone hotspot would have paid for it
+   * before noticing. Pressing Upgrade is the ask, and from there the whole of
+   * it runs through without another prompt: download, install, restart.
+   *
+   * `autoInstallOnAppQuit` catches the other way out. Somebody who quits from
+   * the tray, or shuts the machine down, never presses Restart — and with the
+   * app starting again at every login, an update that only ever applied on that
+   * button would sit downloaded for weeks. Quitting applies it instead, and the
+   * next launch is simply the new version.
+   *
+   * Safe at that point: the quit handler has already flushed and closed any
+   * recording before the process exits, and the installer runs after it.
+   */
   autoUpdater.autoDownload = false
-  autoUpdater.autoInstallOnAppQuit = false
+  autoUpdater.autoInstallOnAppQuit = true
   autoUpdater.logger = null
 
-  autoUpdater.on('checking-for-update', () => set({ state: 'checking', message: null }))
+  /*
+   * A check in progress is only worth showing when nothing better is known.
+   * Once an update has been found the banner stays put through every later
+   * check — flickering back to "checking…" and returning would make the one
+   * thing the user is meant to act on blink in and out.
+   */
+  autoUpdater.on('checking-for-update', () => {
+    if (status.state === 'idle' || status.state === 'error') {
+      set({ state: 'checking', message: null })
+    }
+  })
 
   autoUpdater.on('update-available', (info) => {
     logger.info(SCOPE, 'Update available', { version: info.version })
@@ -89,10 +127,32 @@ export function initUpdater(): void {
   autoUpdater.on('update-downloaded', (info) => {
     logger.info(SCOPE, 'Update downloaded', { version: info.version })
     set({ state: 'ready', version: info.version, progress: 100, message: null })
+
+    /*
+     * Upgrade was one button and means one thing, so the restart follows on its
+     * own rather than asking a second time for something already agreed to.
+     *
+     * The pause is for the person, not the machine: it lets the banner say what
+     * is about to happen before the window goes, so the app closing reads as the
+     * update finishing rather than as a crash.
+     */
+    setTimeout(() => installUpdate(), 1500)
   })
 
   autoUpdater.on('error', (error: Error) => {
     logger.warn(SCOPE, 'Update check or download failed', error)
+
+    /*
+     * A failed check does not un-publish the release.
+     *
+     * If a version is already known to be waiting, a dropped connection on a
+     * later check leaves the offer exactly where it was — otherwise a moment of
+     * bad network would hide an update the user had already been shown, and
+     * they would have no way back to it. A failure *during a download* is
+     * different: that one they asked for and are watching, so it is reported.
+     */
+    if (status.state === 'available' && status.version) return
+
     set({
       state: 'error',
       progress: null,
@@ -165,11 +225,17 @@ export function installUpdate(): void {
   logger.info(SCOPE, 'Installing update', { version: status.version })
 
   /*
-   * `isSilent: false` shows the installer, `isForceRunAfter: true` brings the
-   * new version back up. Together they are what makes this feel like an update
-   * rather than the application vanishing.
+   * `isSilent: true` keeps the installer's own window off the screen, and
+   * `isForceRunAfter: true` brings the new version back up afterwards. Together
+   * the app closes and reopens updated, which is the whole of what the person
+   * pressing Restart asked for — a setup wizard appearing over their desktop is
+   * a step they did not.
+   *
+   * The install cannot happen any earlier than this. Windows will not replace
+   * the files of a running program, so quitting *is* the install; there is no
+   * arrangement in which it finishes while the app is still open.
    */
-  setImmediate(() => autoUpdater.quitAndInstall(false, true))
+  setImmediate(() => autoUpdater.quitAndInstall(true, true))
 }
 
 /* -------------------------------------------------------------------------- */

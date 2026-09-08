@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { DeepPartial } from '@shared/api'
 import type { AppSettings, RecordingState } from '@shared/types'
 import { AuthDialog } from '@/components/AuthDialog'
@@ -138,17 +138,48 @@ function AppShell(): React.JSX.Element {
     })
   }, [])
 
+  /**
+   * A screen the tray has asked for, and when.
+   *
+   * Carries the moment as well as the name so that asking for the same screen
+   * twice is two requests — without it, pressing "Open Calendar" while already
+   * on the Calendar would change nothing and look broken.
+   */
+  const [sectionRequest, setSectionRequest] = useState<{ section: string; at: number } | null>(
+    null
+  )
+
   // Signing out (from here or from anywhere else) must not leave the account
   // area on screen with nothing behind it.
   useEffect(() => {
     if (!user) setRoute((current) => (current === 'account' ? 'recorder' : current))
   }, [user])
 
-  // Coming back from the tray lands on the Recorder. The renderer survives being
-  // hidden, so without this the app would reopen on whatever page it was left on
-  // — the tray is the way to the recorder, and that is what it should show.
+  /*
+   * Coming back from the tray lands on the Recorder. The renderer survives being
+   * hidden, so without this the app would reopen on whatever page it was left on
+   * — the tray is the way to the recorder, and that is what it should show.
+   *
+   * Unless the tray asked for somewhere specific. "Open Calendar" shows the
+   * window *and* names a screen, and the two arrive as separate messages whose
+   * order is not guaranteed — so the specific request wins for a moment either
+   * side of it, rather than being undone by whichever landed second.
+   */
+  const askedFor = useRef(0)
+
   useEffect(() => {
-    return window.api.window.onShown(() => setRoute('recorder'))
+    return window.api.window.onShown(() => {
+      if (Date.now() - askedFor.current < 1000) return
+      setRoute('recorder')
+    })
+  }, [])
+
+  useEffect(() => {
+    return window.api.window.onOpenSection((section) => {
+      askedFor.current = Date.now()
+      setSectionRequest({ section, at: Date.now() })
+      setRoute('account')
+    })
   }, [])
 
   /*
@@ -284,7 +315,12 @@ function AppShell(): React.JSX.Element {
 
           {route === 'recordings' && <RecordingsPage initialRecordingId={pendingPlayId} />}
 
-          {route === 'account' && <AccountPage onSignedOut={() => setRoute('recorder')} />}
+          {route === 'account' && (
+            <AccountPage
+              sectionRequest={sectionRequest}
+              onSignedOut={() => setRoute('recorder')}
+            />
+          )}
 
           {route === 'settings' && (
             <SettingsPage

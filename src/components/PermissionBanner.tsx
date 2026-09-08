@@ -5,6 +5,13 @@ interface PermissionBannerProps {
   permissions: MediaPermissions | null
   /** True when the user has asked for microphone audio in Settings. */
   microphoneWanted: boolean
+  /**
+   * True when activity tracking is switched on for this machine.
+   *
+   * Accessibility only matters while something is trying to count input, so
+   * this keeps the warning off the screen of somebody who is not tracked.
+   */
+  trackingEnabled: boolean
   onOpenSettings: (kind: PermissionKind) => void
   onRecheck: () => void
 }
@@ -21,6 +28,7 @@ interface PermissionBannerProps {
 export function PermissionBanner({
   permissions,
   microphoneWanted,
+  trackingEnabled,
   onOpenSettings,
   onRecheck
 }: PermissionBannerProps): React.JSX.Element | null {
@@ -29,11 +37,25 @@ export function PermissionBanner({
   const screenBlocked = isBlocked(permissions.screen)
   const microphoneBlocked = microphoneWanted && isBlocked(permissions.microphone)
 
-  if (!screenBlocked && !microphoneBlocked) return null
+  /*
+   * Accessibility is the one macOS refuses silently.
+   *
+   * Screen and microphone announce themselves — a black frame, a silent track.
+   * This one just delivers no events, so the day is recorded as idle and looks
+   * like a person who did nothing rather than a permission nobody granted.
+   */
+  const accessibilityBlocked = trackingEnabled && isBlocked(permissions.accessibility)
 
-  // Screen capture is the one that stops a recording outright, so when both are
-  // blocked it is the one to lead with.
-  const kind: PermissionKind = screenBlocked ? 'screen' : 'microphone'
+  if (!screenBlocked && !microphoneBlocked && !accessibilityBlocked) return null
+
+  // Screen capture is the one that stops a recording outright, so when several
+  // are blocked it is the one to lead with; accessibility is last because it
+  // costs a statistic rather than a recording.
+  const kind: PermissionKind = screenBlocked
+    ? 'screen'
+    : microphoneBlocked
+      ? 'microphone'
+      : 'accessibility'
 
   return (
     <div className="rounded-2xl border border-record/40 bg-record/5 p-4">
@@ -43,12 +65,16 @@ export function PermissionBanner({
           <h2 className="text-sm font-semibold text-record-strong">
             {screenBlocked
               ? 'macOS is blocking screen recording'
-              : 'macOS is blocking the microphone'}
+              : microphoneBlocked
+                ? 'macOS is blocking the microphone'
+                : 'Activity tracking cannot count anything'}
           </h2>
           <p className="mt-0.5 text-xs leading-relaxed text-muted">
             {screenBlocked
               ? 'Open System Settings → Privacy & Security → Screen Recording and switch Screen Recorder on. macOS only applies the change after the app is quit and reopened.'
-              : 'Open System Settings → Privacy & Security → Microphone and switch Screen Recorder on. Recordings will otherwise have no narration.'}
+              : microphoneBlocked
+                ? 'Open System Settings → Privacy & Security → Microphone and switch Screen Recorder on. Recordings will otherwise have no narration.'
+                : 'macOS will not report typing or clicks to this app until it is allowed to. Until then the day is recorded as idle, which is not the same as being idle. Open System Settings → Privacy & Security → Accessibility, switch Screen Recorder on, then quit and reopen the app.'}
           </p>
 
           {screenBlocked && microphoneBlocked && (

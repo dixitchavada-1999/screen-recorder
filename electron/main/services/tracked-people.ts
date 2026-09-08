@@ -101,6 +101,7 @@ function toPerson(row: ProfileRow): TrackedPerson {
     // never set a name still has to be findable in the list.
     name: row.full_name?.trim() || email || 'Unnamed account',
     role: (row.role === 'super_admin' ? 'super_admin' : 'user') satisfies UserRole,
+    roleKey: row.role,
     trackingEnabled: row.tracking_enabled === true,
     screenshotsEnabled: row.screenshots_enabled === true
   }

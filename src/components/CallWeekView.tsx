@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ScheduledCall } from '@shared/types'
 import { CallHoverCard } from '@/components/CallHoverCard'
 import { CallSourceDot } from '@/components/CallSourceDot'
@@ -21,8 +21,17 @@ interface CallWeekViewProps {
 /** Pixels per hour. Tall enough that a half-hour call is still a real target. */
 const HOUR_HEIGHT = 48
 
-/** Where the grid scrolls to on open — the working day, not midnight. */
+/** Where the grid scrolls to on open, in a week that does not contain today. */
 const OPENING_HOUR = 8
+
+/**
+ * How much of the past stays on screen when the grid opens on today.
+ *
+ * Enough to see what has just happened without having to scroll up, and little
+ * enough that the rest of the space goes to what has not happened yet — which
+ * is what somebody opening a calendar is looking for.
+ */
+const HOURS_BEFORE_NOW = 2
 
 /** Shortest a call can be drawn, whatever its duration says. */
 const MIN_EVENT_HEIGHT = 18
@@ -50,6 +59,33 @@ export function CallWeekView({
   const days = useMemo(() => weekOf(anchor), [anchor])
   const scroller = useRef<HTMLDivElement>(null)
 
+  /*
+   * The clock behind the now line.
+   *
+   * Once a minute is as often as a line drawn to the minute can move, and the
+   * interval is lined up with the next whole minute rather than a minute from
+   * whenever this mounted — otherwise the line steps at seventeen seconds past
+   * and looks wrong beside a clock that steps at zero.
+   */
+  const [now, setNow] = useState(() => new Date())
+
+  useEffect(() => {
+    let interval: ReturnType<typeof setInterval> | undefined
+
+    const start = setTimeout(
+      () => {
+        setNow(new Date())
+        interval = setInterval(() => setNow(new Date()), 60_000)
+      },
+      60_000 - (Date.now() % 60_000)
+    )
+
+    return () => {
+      clearTimeout(start)
+      if (interval) clearInterval(interval)
+    }
+  }, [])
+
   const byDay = useMemo(() => {
     const map = new Map<string, ScheduledCall[]>()
 
@@ -64,20 +100,39 @@ export function CallWeekView({
   }, [calls])
 
   /*
-   * Opening on midnight would put an empty six hours in front of everybody.
+   * Opens on the present, with a couple of hours of the morning behind it.
+   *
+   * Opening on midnight would put an empty six hours in front of everybody, and
+   * opening on nine is only right until ten. A week that does not contain today
+   * has no present to open on, so it falls back to the working day.
    *
    * Deferred a frame: on mount the grid has not been laid out yet, so setting
    * `scrollTop` immediately is clamped to zero by a container that is still
    * zero pixels tall — the scroll silently does nothing.
+   *
+   * Runs once. Coming back to this week later should find it where it was left,
+   * not jerked back to the clock.
    */
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
-      if (scroller.current) scroller.current.scrollTop = OPENING_HOUR * HOUR_HEIGHT
+      if (!scroller.current) return
+
+      const today = new Date()
+      const thisWeek = days.some((day) => dayKey(day) === dayKey(today))
+
+      const hour = thisWeek
+        ? today.getHours() + today.getMinutes() / 60 - HOURS_BEFORE_NOW
+        : OPENING_HOUR
+
+      scroller.current.scrollTop = Math.max(0, hour * HOUR_HEIGHT)
     })
+
     return () => cancelAnimationFrame(frame)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const todayKey = dayKey(new Date())
+  const todayKey = dayKey(now)
+  const thisWeek = days.some((day) => dayKey(day) === todayKey)
 
   return (
     <div className="overflow-hidden rounded-xl border border-hairline bg-surface/40">
@@ -127,7 +182,7 @@ export function CallWeekView({
       >
         <div className="flex" style={{ height: 24 * HOUR_HEIGHT }}>
           {/* Hour labels. Sat on the line they name, like every other calendar. */}
-          <div className="w-14 shrink-0">
+          <div className="relative w-14 shrink-0">
             {HOURS.map((hour) => (
               <div
                 key={hour}
@@ -141,12 +196,27 @@ export function CallWeekView({
                 )}
               </div>
             ))}
+
+            {/*
+              The clock, on the rail, at the height it is pointing to. Drawn over
+              the hour label it lands on rather than beside it — two numbers a
+              few pixels apart would be a worse answer than one.
+            */}
+            {thisWeek && (
+              <span
+                style={{ top: offsetOf(now) }}
+                className="absolute right-1 -translate-y-1/2 rounded bg-record px-1 py-px font-mono text-[10px] font-medium text-white"
+              >
+                {nowLabel(now)}
+              </span>
+            )}
           </div>
 
           {days.map((day) => (
             <DayColumn
               key={dayKey(day)}
               day={day}
+              now={dayKey(day) === todayKey ? now : null}
               calls={byDay.get(dayKey(day)) ?? []}
               busy={busy}
               accountColors={accountColors}
@@ -166,6 +236,7 @@ export function CallWeekView({
 
 function DayColumn({
   day,
+  now,
   calls,
   busy,
   accountColors,
@@ -173,6 +244,8 @@ function DayColumn({
   onSchedule
 }: {
   day: Date
+  /** The clock, on the one column that is today. Null on every other. */
+  now: Date | null
   calls: ScheduledCall[]
   busy: boolean
   accountColors: Map<string, string>
@@ -195,6 +268,25 @@ function DayColumn({
           className="block w-full border-t border-hairline/50 transition-colors first:border-t-0 hover:bg-accent/5 disabled:cursor-not-allowed"
         />
       ))}
+
+      {/*
+        Where the day has got to.
+        
+        Above the calls rather than beneath them: a line hidden behind whatever
+        is happening right now is hidden at exactly the moment it is worth
+        seeing. `pointer-events-none` so it stays a mark and not a wall — the
+        empty space underneath still schedules a call when clicked.
+      */}
+      {now && (
+        <div
+          aria-hidden="true"
+          style={{ top: offsetOf(now) }}
+          className="pointer-events-none absolute inset-x-0 z-20 flex items-center"
+        >
+          <span className="-ml-1 size-2 shrink-0 rounded-full bg-record" />
+          <span className="h-px flex-1 bg-record" />
+        </div>
+      )}
 
       {laid.map(({ call, column, columns }) => {
         const start = new Date(call.startsAt)
@@ -379,6 +471,16 @@ function at(day: Date, hour: number): Date {
   const when = new Date(day)
   when.setHours(hour, 0, 0, 0)
   return when
+}
+
+/** How far down the grid an instant falls, in pixels. */
+function offsetOf(when: Date): number {
+  return (when.getHours() + when.getMinutes() / 60) * HOUR_HEIGHT
+}
+
+/** The clock as the rail shows it — short, because it sits in fourteen pixels. */
+function nowLabel(when: Date): string {
+  return when.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
 }
 
 const hourLabel = (hour: number): string =>

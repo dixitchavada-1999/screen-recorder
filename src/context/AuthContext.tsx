@@ -20,6 +20,17 @@ interface AuthContextValue {
   signOut: () => Promise<void>
   /** Signs out here and everywhere else the account is open. */
   signOutEverywhere: () => Promise<void>
+  /**
+   * Whether the signed-in account holds a permission.
+   *
+   * The one question every screen should ask before offering something —
+   * never the role, which two people can share while needing different powers.
+   *
+   * This decides what is *drawn*. It is not the protection: the database
+   * refuses what it refuses whatever the window shows, and both have to agree
+   * for a capability to be real.
+   */
+  can: (permission: string) => boolean
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
@@ -102,9 +113,42 @@ export function AuthProvider({ children }: { children: ReactNode }): React.JSX.E
     }
   }, [])
 
+  /*
+   * Re-read the account whenever the window comes back.
+   *
+   * Permissions are resolved at sign-in and then cached, so somebody moved onto
+   * a different role would go on seeing their old buttons until they signed out
+   * — and be refused by the database when they pressed one, which reads as the
+   * app being broken rather than as a permission having changed.
+   *
+   * The window being brought up from the tray is the natural moment to catch
+   * up: it costs one call, at a point where a small delay is invisible.
+   */
+  useEffect(() => {
+    return window.api.window.onShown(() => {
+      void auth
+        .restoreSession()
+        .then((current) => setUser(current))
+        .catch(() => {
+          // A failed refresh says nothing about the session. Keep what we have
+          // rather than signing somebody out because the network blinked.
+        })
+    })
+  }, [])
+
+  const can = useCallback(
+    (permission: string): boolean => {
+      if (!user) return false
+      // A full-access role answers before the list is consulted, exactly as the
+      // database does — so the two can never disagree about a super admin.
+      return user.fullAccess || user.permissions.includes(permission)
+    },
+    [user]
+  )
+
   const value = useMemo(
-    () => ({ user, loading, signIn, signOut, signOutEverywhere }),
-    [user, loading, signIn, signOut, signOutEverywhere]
+    () => ({ user, loading, signIn, signOut, signOutEverywhere, can }),
+    [user, loading, signIn, signOut, signOutEverywhere, can]
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

@@ -1,5 +1,6 @@
 import type {
   ActivityDay,
+  AppRole,
   AppInfo,
   AppSettings,
   AuthUser,
@@ -15,6 +16,7 @@ import type {
   LogPayload,
   MediaPermissions,
   OrphanRecording,
+  PermissionInfo,
   PermissionKind,
   ProcessingProgress,
   RecorderStateSync,
@@ -25,7 +27,17 @@ import type {
   ScheduledCallRange,
   ScheduledCallStatus,
   SerializedError,
+  TaskBoard,
+  TaskBoardDetail,
+  TaskCard,
+  TaskCardInput,
+  TaskCardMove,
+  TaskDueToday,
+  TaskList,
+  TaskNote,
+  TaskPerson,
   TrackedPerson,
+  UserPermission,
   TrackingPolicy,
   SessionHandle,
   SignInInput,
@@ -87,6 +99,12 @@ export interface RecorderApi {
      * macOS only offers that switch in System Settings from then on.
      */
     requestMicrophone(): Promise<IpcResult<MediaPermissions>>
+    /**
+     * macOS only. Raises the system prompt that offers to open Accessibility
+     * settings — where the switch actually is. Granting it needs the app
+     * restarted before the input hook starts receiving anything.
+     */
+    requestAccessibility(): Promise<IpcResult<MediaPermissions>>
     /** Opens the OS privacy pane for that permission. */
     openSettings(kind: PermissionKind): Promise<IpcResult<void>>
   }
@@ -193,6 +211,75 @@ export interface RecorderApi {
     /** Addressed by Nexus id, so somebody who has never opened the app can be named. */
     create(body: string, nexusIds: string[]): Promise<IpcResult<KpiNote>>
     remove(id: string): Promise<IpcResult<void>>
+  }
+
+  /**
+   * Roles and permissions.
+   *
+   * Reading is open to anybody signed in — the window has to know what it may
+   * offer before it can offer it. Changing any of it belongs to a super admin,
+   * and the database enforces that whatever this surface allows.
+   */
+  roles: {
+    list(): Promise<IpcResult<AppRole[]>>
+    /** Everything the app knows how to gate, for the screen to render. */
+    catalogue(): Promise<IpcResult<PermissionInfo[]>>
+
+    create(label: string): Promise<IpcResult<AppRole>>
+    rename(key: string, label: string): Promise<IpcResult<void>>
+    /** Refuses while anybody still holds it. */
+    remove(key: string): Promise<IpcResult<void>>
+
+    setPermissions(key: string, permissions: string[]): Promise<IpcResult<string[]>>
+    setUserRole(userId: string, roleKey: string): Promise<IpcResult<void>>
+
+    /** What one person has been given or refused on top of their role. */
+    userPermissions(userId: string): Promise<IpcResult<UserPermission[]>>
+    /** Replaces that whole set. An empty array puts them back on their role. */
+    setUserPermissions(
+      userId: string,
+      overrides: UserPermission[]
+    ): Promise<IpcResult<UserPermission[]>>
+  }
+
+  /**
+   * Task boards — the kanban module.
+   *
+   * Every call runs as the signed-in account, so what comes back is whatever
+   * row level security allows: the boards this person is a member of, and for a
+   * super admin, all of them. Inside a board a member may do anything; opening,
+   * renaming and staffing one belong to whoever opened it.
+   */
+  tasks: {
+    /** Every board this account can see, without their contents. */
+    boards(): Promise<IpcResult<TaskBoard[]>>
+    /** One board with its lists, cards and assignees. */
+    board(boardId: string): Promise<IpcResult<TaskBoardDetail>>
+    /** Whatever is due today, wherever it is. For the dashboard. */
+    dueToday(): Promise<IpcResult<TaskDueToday[]>>
+
+    createBoard(name: string): Promise<IpcResult<TaskBoard>>
+    renameBoard(boardId: string, name: string): Promise<IpcResult<void>>
+    deleteBoard(boardId: string): Promise<IpcResult<void>>
+    /** Replaces the membership outright. Nexus ids, as everywhere else. */
+    setBoardMembers(boardId: string, nexusIds: string[]): Promise<IpcResult<TaskPerson[]>>
+
+    createList(boardId: string, name: string): Promise<IpcResult<TaskList>>
+    renameList(listId: string, name: string): Promise<IpcResult<void>>
+    /** Takes the cards on it with it. */
+    deleteList(listId: string): Promise<IpcResult<void>>
+
+    createCard(listId: string, input: TaskCardInput): Promise<IpcResult<TaskCard>>
+    updateCard(cardId: string, input: TaskCardInput): Promise<IpcResult<TaskCard>>
+    /** Where it was dropped, as neighbours — the position is the server's to work out. */
+    moveCard(cardId: string, move: TaskCardMove): Promise<IpcResult<TaskCard>>
+    deleteCard(cardId: string): Promise<IpcResult<void>>
+
+    /** Everything said on one task, oldest first. */
+    notes(cardId: string): Promise<IpcResult<TaskNote[]>>
+    addNote(cardId: string, body: string): Promise<IpcResult<TaskNote>>
+    /** Your own always; anybody's with the permission that deletes tasks. */
+    deleteNote(noteId: string): Promise<IpcResult<void>>
   }
 
   calls: {
@@ -302,6 +389,11 @@ export interface RecorderApi {
     excludeFromCapture(excluded: boolean): Promise<IpcResult<void>>
     /** Fires when the window is brought back from the tray. */
     onShown(listener: () => void): Unsubscribe
+    /**
+     * Fires when something outside the window asks for a particular screen —
+     * the tray's "Open Calendar", and anything like it later.
+     */
+    onOpenSection(listener: (section: string) => void): Unsubscribe
   }
 
   tray: {

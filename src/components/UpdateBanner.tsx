@@ -40,7 +40,7 @@ export function UpdateBanner({
       <div className="min-w-0 flex-1">
         <p className={cn('text-sm font-medium', ready ? 'text-positive' : 'text-accent-strong')}>
           {ready
-            ? `Version ${version} is ready to install`
+            ? `Version ${version} is ready — restarting`
             : state === 'downloading'
               ? `Downloading version ${version}`
               : `Version ${version} is available`}
@@ -48,10 +48,10 @@ export function UpdateBanner({
 
         <p className="mt-0.5 text-xs leading-relaxed text-muted">
           {ready
-            ? 'The application will close, update and open again. Nothing you have saved is affected.'
+            ? 'The window is about to close and open again. Nothing you have saved is affected.'
             : state === 'downloading'
-              ? 'You can carry on working; this finishes in the background.'
-              : 'Around 100 MB, or less if you are only a version or two behind.'}
+              ? 'You can carry on working. The app restarts by itself once this finishes.'
+              : 'Around 100 MB. It downloads, installs and restarts on its own from here.'}
         </p>
 
         {/* A download with no sense of progress reads as one that has stalled. */}
@@ -67,7 +67,7 @@ export function UpdateBanner({
 
       {state === 'available' && (
         <Button size="sm" variant="primary" onClick={onDownload}>
-          Download
+          Upgrade
         </Button>
       )}
 
@@ -75,9 +75,10 @@ export function UpdateBanner({
         <span className="shrink-0 font-mono text-xs text-muted">{progress ?? 0}%</span>
       )}
 
+      {/* The restart follows on its own — this is the way out if it does not. */}
       {ready && (
-        <Button size="sm" variant="primary" onClick={onInstall}>
-          Restart and install
+        <Button size="sm" variant="ghost" onClick={onInstall}>
+          Restart now
         </Button>
       )}
     </div>

@@ -21,10 +21,11 @@ const gated = process.platform === 'darwin'
 /** Deep links into the exact privacy pane, so nobody has to go hunting. */
 const PRIVACY_PANES: Record<PermissionKind, string> = {
   screen: 'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture',
-  microphone: 'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone'
+  microphone: 'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone',
+  accessibility: 'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility'
 }
 
-function read(kind: PermissionKind): MediaPermissionState {
+function read(kind: 'screen' | 'microphone'): MediaPermissionState {
   if (!gated) return 'not-required'
 
   try {
@@ -35,8 +36,56 @@ function read(kind: PermissionKind): MediaPermissionState {
   }
 }
 
+/**
+ * Whether macOS trusts this app to see input in other applications.
+ *
+ * Not a media permission, and not readable through `getMediaAccessStatus` —
+ * Accessibility is its own thing, with only two states as far as this app is
+ * concerned: trusted, or not. There is no "not yet decided" to distinguish,
+ * because macOS never asks on its own.
+ *
+ * `false` is passed so that merely reading it does not raise the system prompt.
+ * Asking is `requestAccessibilityAccess`, and it happens when somebody presses
+ * a button.
+ */
+function readAccessibility(): MediaPermissionState {
+  if (!gated) return 'not-required'
+
+  try {
+    return systemPreferences.isTrustedAccessibilityClient(false) ? 'granted' : 'denied'
+  } catch (error) {
+    logger.warn(SCOPE, 'Could not read accessibility trust', error)
+    return 'unknown'
+  }
+}
+
 export function getMediaPermissions(): MediaPermissions {
-  return { screen: read('screen'), microphone: read('microphone') }
+  return {
+    screen: read('screen'),
+    microphone: read('microphone'),
+    accessibility: readAccessibility()
+  }
+}
+
+/**
+ * Raises the macOS prompt that offers to open Accessibility settings.
+ *
+ * The prompt is the only one macOS provides here, and it does not grant
+ * anything — it points at System Settings, where the switch is. Granting also
+ * requires the app to be restarted before the hook starts receiving events,
+ * which is macOS's behaviour and not something this app can work around.
+ */
+export function requestAccessibilityAccess(): MediaPermissions {
+  if (gated && readAccessibility() !== 'granted') {
+    try {
+      systemPreferences.isTrustedAccessibilityClient(true)
+      logger.info(SCOPE, 'Accessibility prompt raised')
+    } catch (error) {
+      logger.warn(SCOPE, 'Accessibility prompt failed', error)
+    }
+  }
+
+  return getMediaPermissions()
 }
 
 /**

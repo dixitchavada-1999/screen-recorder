@@ -1,12 +1,15 @@
 import { useState } from 'react'
 import type { TrackedPerson } from '@shared/types'
 import { TrackingPolicyDialog } from '@/components/TrackingPolicyDialog'
+import { UserPermissionsDialog } from '@/components/UserPermissionsDialog'
 import { UserActivityDialog } from '@/components/UserActivityDialog'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
-import { Toggle } from '@/components/ui/Controls'
+import { Select, Toggle } from '@/components/ui/Controls'
+import { useAuth } from '@/context/AuthContext'
 import { useSettings } from '@/context/SettingsContext'
 import { useToast } from '@/context/ToastContext'
+import { useRoles } from '@/hooks/useRoles'
 import { useTrackedPeople } from '@/hooks/useTrackedPeople'
 import { toSerializedError } from '@/services/ipc'
 import { cn } from '@/utils/cn'
@@ -23,11 +26,44 @@ import { cn } from '@/utils/cn'
  * protection.
  */
 export function UserActivity(): React.JSX.Element {
-  const { people, loading, error, busy, setPolicy } = useTrackedPeople()
+  const { people, loading, error, busy, setPolicy, refresh } = useTrackedPeople()
   const [viewing, setViewing] = useState<TrackedPerson | null>(null)
   const [policyOpen, setPolicyOpen] = useState(false)
+  const [changingRole, setChangingRole] = useState<string | null>(null)
+  const [permissionsFor, setPermissionsFor] = useState<TrackedPerson | null>(null)
   const { settings, updateSettings } = useSettings()
+  const { user, can } = useAuth()
   const { push } = useToast()
+
+  // The roles a person can be moved onto. Read here rather than passed in,
+  // because this is the only screen that hands one out.
+  const roles = useRoles()
+
+  const assign = async (person: TrackedPerson, roleKey: string): Promise<void> => {
+    setChangingRole(person.id)
+    try {
+      await window.api.roles.setUserRole(person.id, roleKey).then((result) => {
+        if (!result.ok) throw result.error
+      })
+      await refresh()
+
+      const label = roles.roles.find((role) => role.key === roleKey)?.label ?? roleKey
+      push({
+        tone: 'info',
+        title: `${person.name} is now ${label}`,
+        description: 'Their app picks it up the next time they open the window.'
+      })
+    } catch (caught) {
+      const failure = toSerializedError(caught)
+      push({
+        tone: 'error',
+        title: failure.message,
+        ...(failure.hint ? { description: failure.hint } : {})
+      })
+    } finally {
+      setChangingRole(null)
+    }
+  }
 
   const change = async (
     person: TrackedPerson,
@@ -89,10 +125,7 @@ export function UserActivity(): React.JSX.Element {
                   />
                   <div className="min-w-0">
                     <p className="truncate text-sm text-ink">{person.name}</p>
-                    <p className="truncate text-[11px] text-faint">
-                      {person.email}
-                      {person.role === 'super_admin' && ' · super admin'}
-                    </p>
+                    <p className="truncate text-[11px] text-faint">{person.email}</p>
                   </div>
                 </div>
 
@@ -125,6 +158,40 @@ export function UserActivity(): React.JSX.Element {
                     }
                   />
 
+                  {/*
+                    Their own row has no picker. A super admin who could demote
+                    themselves is one mis-click from a system nobody can
+                    administer — the server refuses it too.
+                  */}
+                  {can('roles.assign') && person.id !== user?.id && roles.roles.length > 0 && (
+                    <Select
+                      aria-label={`Role for ${person.name}`}
+                      value={person.roleKey}
+                      disabled={changingRole === person.id}
+                      options={roles.roles.map((role) => ({
+                        value: role.key,
+                        label: role.label
+                      }))}
+                      onValueChange={(roleKey) => void assign(person, roleKey)}
+                      className="h-8 w-36 text-xs"
+                    />
+                  )}
+
+                  {/*
+                    Their role decides most of it; this is for the one person it
+                    does not fit. Beside the role picker on purpose — the two
+                    are the same question asked at different resolutions.
+                  */}
+                  {can('roles.assign') && (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => setPermissionsFor(person)}
+                    >
+                      Permissions
+                    </Button>
+                  )}
+
                   <Button size="sm" variant="secondary" onClick={() => setViewing(person)}>
                     View activity
                   </Button>
@@ -137,6 +204,8 @@ export function UserActivity(): React.JSX.Element {
       </Card>
 
       <UserActivityDialog person={viewing} onClose={() => setViewing(null)} />
+
+      <UserPermissionsDialog person={permissionsFor} onClose={() => setPermissionsFor(null)} />
 
       {settings && (
         <TrackingPolicyDialog

@@ -188,6 +188,14 @@ export interface TrackedPerson {
   email: string
   name: string
   role: UserRole
+  /**
+   * The role exactly as stored.
+   *
+   * `role` above is narrowed to the names the code knows, so a role somebody
+   * has since invented reads as `user` there. This is what the role picker on
+   * the Team screen sets and shows.
+   */
+  roleKey: string
   trackingEnabled: boolean
   screenshotsEnabled: boolean
 }
@@ -217,6 +225,171 @@ export interface KpiNote {
    * list of one that reads like the whole audience.
    */
   recipients: KpiRecipient[]
+}
+
+/* -------------------------------------------------------------------------- */
+/*                            Roles and permissions                           */
+/* -------------------------------------------------------------------------- */
+
+/** One thing the app knows how to gate. */
+export interface PermissionInfo {
+  key: string
+  /** Which part of the app it belongs to, so the screen can group them. */
+  module: string
+  label: string
+  description: string
+}
+
+/**
+ * One person's exception to what their role gives them.
+ *
+ * `granted` is the whole point: `true` adds a permission the role does not
+ * carry, `false` takes one away that it does. Anything with no row here simply
+ * follows the role.
+ */
+export interface UserPermission {
+  permissionKey: string
+  granted: boolean
+}
+
+/** A role, and what it carries. */
+export interface AppRole {
+  key: string
+  label: string
+  /**
+   * Answers yes to everything without a lookup, and cannot be edited from the
+   * app. Only a super admin has it — it is what stops whoever administers
+   * permissions from locking themselves out of the screen that administers
+   * them.
+   */
+  fullAccess: boolean
+  /** One of the three the code names by hand. Re-permissionable, not removable. */
+  builtIn: boolean
+  /** Permission keys. Empty for a full-access role, which needs none. */
+  permissions: string[]
+}
+
+/* -------------------------------------------------------------------------- */
+/*                                Task boards                                 */
+/* -------------------------------------------------------------------------- */
+
+/** How urgent a card is. Stored as text so a new level is a migration, not an enum dance. */
+export type TaskPriority = 'low' | 'normal' | 'high' | 'urgent'
+
+/** One of the people a card is for, or a board is open to, by Nexus identity. */
+export interface TaskPerson {
+  nexusId: string
+  name: string
+}
+
+/** A board as it appears in the picker, without its lists or cards. */
+export interface TaskBoard {
+  id: string
+  name: string
+  /** Who opened it. Only they, or a super admin, may rename or remove it. */
+  createdBy: string
+  createdAt: string
+  members: TaskPerson[]
+  /** How much is on it, so the picker can say something without loading it. */
+  cardCount: number
+}
+
+/** One column on a board. */
+export interface TaskList {
+  id: string
+  boardId: string
+  name: string
+  position: number
+}
+
+/** A piece of work. */
+export interface TaskCard {
+  id: string
+  listId: string
+  boardId: string
+  title: string
+  description: string
+  position: number
+  /** ISO 8601, or null when nothing is due. */
+  dueAt: string | null
+  priority: TaskPriority
+  createdAt: string
+  updatedAt: string
+  assignees: TaskPerson[]
+  /** How many notes are on it, so the tile can say so without loading them. */
+  noteCount: number
+  /**
+   * Whether this account may read the thread on this task.
+   *
+   * Narrower than being able to see the task: the notes are for the people it
+   * is assigned to, and for anybody who can see every task. Worked out by the
+   * server with the rule the policy uses, so the window never offers a thread
+   * that would come back empty.
+   */
+  notesVisible: boolean
+  /**
+   * Whether this account may change this task.
+   *
+   * Worked out by the server with the same rule the policy uses, rather than in
+   * the window — which knows the permissions but not who wrote the task, and
+   * would have to be told that anyway. One answer, from the side that decides.
+   */
+  editable: boolean
+}
+
+/** One thing somebody said on a task. */
+export interface TaskNote {
+  id: string
+  cardId: string
+  /** The account that wrote it — used to tell your own notes from everybody else's. */
+  authorId: string
+  /** Their name as it stood when they wrote it. */
+  authorName: string
+  body: string
+  createdAt: string
+  /** Whether this account may take it back. Own notes always; others by permission. */
+  removable: boolean
+}
+
+/**
+ * A task falling due today, for the dashboard.
+ *
+ * Carries the project's name because it is read outside any project: on a board
+ * the column you are looking at says where you are, and on a dashboard nothing
+ * does.
+ */
+export interface TaskDueToday extends TaskCard {
+  boardName: string
+}
+
+/** One board with everything on it — what the board screen renders from. */
+export interface TaskBoardDetail {
+  board: TaskBoard
+  lists: TaskList[]
+  cards: TaskCard[]
+}
+
+/** What a new card needs, and what may be changed about an existing one. */
+export interface TaskCardInput {
+  title: string
+  description?: string
+  dueAt?: string | null
+  priority?: TaskPriority
+  /** Nexus ids. Passing an array replaces the whole assignee list. */
+  assigneeNexusIds?: string[]
+}
+
+/**
+ * Where a card ended up, as the two cards it was dropped between.
+ *
+ * Neighbours rather than a number: the window knows what the card was dropped
+ * between, and the position that implies is the server's to work out. Null on
+ * either side means the top or the bottom of the list.
+ */
+export interface TaskCardMove {
+  toListId: string
+  beforeCardId: string | null
+  afterCardId: string | null
 }
 
 /** One capture, with a link the window can actually load. */
@@ -286,12 +459,28 @@ export interface ActivitySegment {
   state: 'active' | 'idle'
 }
 
+/* -------------------------------------------------------------------------- */
+/*                                  Shortcuts                                 */
+/* -------------------------------------------------------------------------- */
+
+export interface ShortcutSettings {
+  /**
+   * The key that starts and stops a recording from anywhere on the machine.
+   *
+   * An Electron accelerator — `Control+Space`, `Control+Shift+R`. Registered
+   * globally, so it works while the app is in the tray and somebody is in a
+   * call; empty switches it off entirely.
+   */
+  toggleRecording: string
+}
+
 export interface AppSettings {
   video: VideoSettings
   audio: AudioSettings
   storage: StorageSettings
   notifications: NotificationSettings
   startup: StartupSettings
+  shortcuts: ShortcutSettings
   tracking: TrackingSettings
   experimental: ExperimentalSettings
   /** Schema version, used to migrate persisted settings between releases. */
@@ -348,6 +537,27 @@ export interface AuthUser {
   /** Display name. Falls back to the local part of the email when unset. */
   name: string
   role: UserRole
+  /**
+   * The role exactly as stored.
+   *
+   * `role` above is narrowed to the three the code knows by name, so a role
+   * somebody has invented since reads as `user` there — the least privileged
+   * answer. This is the real one, for showing and for the screen that hands
+   * roles out. What somebody may actually *do* is `permissions`, not either.
+   */
+  roleKey: string
+  /** The role's own name for itself, for showing rather than testing. */
+  roleLabel: string
+  /** True for a role that answers yes to everything. Only a super admin has it. */
+  fullAccess: boolean
+  /**
+   * What this account may do, resolved from its role at sign-in.
+   *
+   * Used to decide what the window offers. It is not the protection — the
+   * database refuses what it refuses regardless of what is drawn here — and it
+   * is a snapshot, so it is re-read when the window is shown.
+   */
+  permissions: string[]
   /**
    * Who this person is in Nexus.
    *
@@ -706,10 +916,22 @@ export interface MediaPermissions {
   /** Screen recording. On macOS this is only ever granted from System Settings. */
   screen: MediaPermissionState
   microphone: MediaPermissionState
+  /**
+   * Whether macOS will report input that happened in other applications.
+   *
+   * Activity tracking counts keystrokes and clicks across the machine, and
+   * macOS refuses that to an untrusted application — not with an error, but by
+   * delivering nothing. Without this the counters sit at zero and a working day
+   * reads as an idle one, which looks like data rather than like a refusal.
+   *
+   * `not-required` everywhere but macOS: Windows and Linux hand global input
+   * hooks to any process that asks.
+   */
+  accessibility: MediaPermissionState
 }
 
 /** The privacy panes the app knows how to open. */
-export type PermissionKind = 'screen' | 'microphone'
+export type PermissionKind = 'screen' | 'microphone' | 'accessibility'
 
 /* -------------------------------------------------------------------------- */
 

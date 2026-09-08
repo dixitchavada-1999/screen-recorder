@@ -1,4 +1,4 @@
-import { app, powerMonitor } from 'electron'
+import { app, powerMonitor, systemPreferences } from 'electron'
 import { appendFile, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { logger } from '../lib/logger'
@@ -168,6 +168,28 @@ function clearTimers(): void {
 function attachHook(): void {
   if (hooked) return
 
+  /*
+   * macOS refuses this by delivering nothing.
+   *
+   * A global input hook needs Accessibility trust, granted per application in
+   * System Settings. Without it `uIOhook.start()` succeeds and no event ever
+   * arrives — so the counters sit at zero and a working day is indistinguishable
+   * from an idle one. That is worse than an error, because it looks like data.
+   *
+   * So the hook is not attached at all until macOS trusts the app, and
+   * `available` stays false, which is what the rest of the tracker already
+   * understands as "this machine cannot count input".
+   */
+  if (process.platform === 'darwin' && !isTrustedForInput()) {
+    available = false
+    logger.warn(
+      SCOPE,
+      'macOS has not granted Accessibility, so input cannot be counted',
+      { hint: 'System Settings → Privacy & Security → Accessibility, then reopen the app' }
+    )
+    return
+  }
+
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { uIOhook } = require('uiohook-napi') as typeof import('uiohook-napi')
@@ -185,6 +207,22 @@ function attachHook(): void {
   } catch (error) {
     available = false
     logger.warn(SCOPE, 'Input counting is unavailable on this machine', error)
+  }
+}
+
+/**
+ * Whether macOS trusts this app to see input in other applications.
+ *
+ * `false` so that asking does not raise the prompt — this runs whenever tracking
+ * starts, which is not a moment the user chose. The prompt belongs to the button
+ * in Settings, through `requestAccessibilityAccess`.
+ */
+function isTrustedForInput(): boolean {
+  try {
+    return systemPreferences.isTrustedAccessibilityClient(false)
+  } catch (error) {
+    logger.warn(SCOPE, 'Could not read accessibility trust', error)
+    return false
   }
 }
 

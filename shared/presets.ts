@@ -116,7 +116,7 @@ export function computeVideoBitrateKbps(
 /*                              Default settings                              */
 /* -------------------------------------------------------------------------- */
 
-export const SETTINGS_SCHEMA_VERSION = 4
+export const SETTINGS_SCHEMA_VERSION = 5
 
 /** Lead times the Call Manager settings offer, longest first. */
 export const REMINDER_LEAD_OPTIONS = [30, 15, 5, 0] as const
@@ -162,6 +162,19 @@ export const DEFAULT_SETTINGS: AppSettings = {
     openAtLogin: true,
     // Off by default: the app lives in the tray and keeps no taskbar button.
     showInTaskbar: false
+  },
+  shortcuts: {
+    /*
+     * Works with the window closed and somebody else's application in front —
+     * which is the point: the moment worth recording is usually one where this
+     * app is the last thing on screen.
+     *
+     * Ctrl+Space is what was asked for, and it is worth knowing what it costs:
+     * Windows uses it to switch input methods, and most editors use it for
+     * autocomplete. Registering it here takes it from all of them. It is a
+     * setting rather than a constant so that can be undone without a release.
+     */
+    toggleRecording: 'Control+Space'
   },
   tracking: {
     // Off. A tracker that arrives already running is the thing this design

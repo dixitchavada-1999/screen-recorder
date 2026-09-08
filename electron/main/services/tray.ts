@@ -4,7 +4,6 @@ import { join } from 'node:path'
 import { IPC } from '@shared/ipc'
 import type { RecorderStateSync, TrayCommand } from '@shared/types'
 import { logger } from '../lib/logger'
-import { currentUser } from './auth'
 import { settingsStore } from './settings-store'
 
 const SCOPE = 'tray'
@@ -105,6 +104,26 @@ function sendCommand(command: TrayCommand): void {
   window.webContents.send(IPC.EVENT_TRAY_COMMAND, command)
 }
 
+/**
+ * Brings the window up on a particular screen.
+ *
+ * Shown first, then told where to go. The other order would send the message to
+ * a window that may still be hidden, and a renderer that is not painting has
+ * nowhere to put it.
+ */
+function openSection(section: string): void {
+  callbacks?.onShowWindow()
+
+  const [window] = BrowserWindow.getAllWindows()
+  if (!window || window.isDestroyed()) {
+    logger.warn(SCOPE, 'Tray could not open a section, no window is available', { section })
+    return
+  }
+
+  logger.info(SCOPE, 'Tray opened a section', { section })
+  window.webContents.send(IPC.EVENT_OPEN_SECTION, section)
+}
+
 function formatElapsed(ms: number): string {
   const total = Math.max(0, Math.floor(ms / 1000))
   const pad = (value: number): string => String(value).padStart(2, '0')
@@ -115,7 +134,6 @@ function formatElapsed(ms: number): string {
 
 function buildMenu(): Electron.Menu {
   const { state, canStart } = currentState
-  const { tracking } = settingsStore.get()
 
   const isRecording = state === 'recording'
   const isPaused = state === 'paused'
@@ -140,6 +158,13 @@ function buildMenu(): Electron.Menu {
       label: 'Hide App',
       click: () => callbacks?.onHideWindow()
     },
+    {
+      // Straight to the day, without going through the recorder and the home
+      // icon first. Checking what is on is the commonest reason to open this at
+      // all, and it was three clicks away.
+      label: 'Open Calendar',
+      click: () => openSection('calls')
+    },
     { type: 'separator' },
 
     {
@@ -161,50 +186,11 @@ function buildMenu(): Electron.Menu {
     },
     { type: 'separator' },
 
-    /*
-     * Activity tracking, stated whether or not it is running.
-     *
-     * A line that only appears while tracking is on would leave "is this thing
-     * watching me?" answerable only by opening the app. Saying "Activity
-     * tracking: off" costs one row and answers it from the menu bar.
-     *
-     * Stopping is offered here; starting is not. Turning it on belongs where
-     * the disclosure is, and that is Settings.
-     */
-    {
-      label: `Activity tracking: ${tracking.enabled ? 'on' : 'off'}`,
-      enabled: false
-    },
-    // Stopping is an administrator's, so the item only exists for one. The line
-    // above stays for everybody: whether it is running is not a secret, only
-    // the switch is.
-    ...(tracking.enabled && currentUser()?.role === 'super_admin'
-      ? [
-          {
-            label: 'Stop Tracking',
-            click: () => stopTracking()
-          } satisfies Electron.MenuItemConstructorOptions
-        ]
-      : []),
-    { type: 'separator' },
-
     {
       label: 'Quit',
       click: () => callbacks?.onQuit()
     }
   ])
-}
-
-/**
- * Switches tracking off from the tray.
- *
- * Writes the setting rather than telling the renderer to: the tray has to work
- * with the window closed, and the settings store broadcasts the change to
- * whatever is open anyway.
- */
-function stopTracking(): void {
-  settingsStore.update({ tracking: { enabled: false } })
-  logger.info(SCOPE, 'Tracking stopped from the tray')
 }
 
 /** Rebuilds the menu and refreshes the tooltip. */

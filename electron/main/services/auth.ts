@@ -49,6 +49,21 @@ let restoreAttempted = false
  */
 interface ProfileSnapshot {
   role: UserRole
+  /**
+   * The role exactly as stored, which `role` above is not.
+   *
+   * `role` is narrowed to the three the code knows by name, so a role somebody
+   * has since invented reads as `user` — the least privileged answer, and the
+   * right one for the old role tests that still exist. This keeps the real key,
+   * for the screens that hand roles out and for showing somebody what they are.
+   */
+  roleKey: string
+  /** The role's own name for itself, for showing rather than testing. */
+  roleLabel: string
+  /** True for a role that answers yes to everything without a lookup. */
+  fullAccess: boolean
+  /** What this account may do, resolved from its role. Empty on any failure. */
+  permissions: string[]
   email: string
   name: string
   /**
@@ -501,6 +516,10 @@ function toAuthUser(session: Session): AuthUser {
     email,
     name: currentProfile?.name || nameFromEmail(email),
     role: currentProfile?.role ?? 'user',
+    roleKey: currentProfile?.roleKey ?? 'user',
+    roleLabel: currentProfile?.roleLabel ?? 'User',
+    fullAccess: currentProfile?.fullAccess ?? false,
+    permissions: currentProfile?.permissions ?? [],
     nexusUserId: currentProfile?.nexusUserId ?? null
   }
 }
@@ -537,15 +556,117 @@ async function loadProfile(userId: string): Promise<void> {
     const email = typeof row.email === 'string' ? row.email : ''
     const name = typeof row.full_name === 'string' ? row.full_name.trim() : ''
 
+    const roleKey = typeof row.role === 'string' && row.role ? row.role : 'user'
+    const grant = await loadRole(roleKey)
+    const permissions = grant.fullAccess
+      ? grant.permissions
+      : await applyOverrides(userId, grant.permissions)
+
     currentProfile = {
-      role:
-        row.role === 'super_admin' ? 'super_admin' : row.role === 'admin' ? 'admin' : 'user',
+      role: roleKey === 'super_admin' ? 'super_admin' : roleKey === 'admin' ? 'admin' : 'user',
+      roleKey,
+      roleLabel: grant.label,
+      fullAccess: grant.fullAccess,
+      permissions,
       email,
       name: name || nameFromEmail(email),
       nexusUserId: typeof row.nexus_user_id === 'string' ? row.nexus_user_id : null
     }
   } catch (error) {
     logger.warn(SCOPE, 'Profile lookup failed', error)
+  }
+}
+
+/**
+ * What a role carries.
+ *
+ * One read with the grants embedded, because both halves are needed together
+ * and neither is worth a second round trip on every sign-in.
+ *
+ * Every failure lands on nothing — no label, no full access, no permissions.
+ * The window then offers nothing, which is recoverable; the opposite mistake is
+ * handing somebody an administrator's buttons because a query timed out.
+ */
+async function loadRole(
+  roleKey: string
+): Promise<{ label: string; fullAccess: boolean; permissions: string[] }> {
+  const empty = { label: roleKey, fullAccess: false, permissions: [] as string[] }
+
+  try {
+    const { data, error } = await getClient()
+      .from('app_roles')
+      .select('label, full_access, role_permissions(permission_key)')
+      .eq('key', roleKey)
+      .maybeSingle()
+
+    if (error) {
+      logger.warn(SCOPE, 'Could not read what this role may do', error)
+      return empty
+    }
+
+    if (!data) {
+      logger.warn(SCOPE, 'Signed in with a role that no longer exists', { roleKey })
+      return empty
+    }
+
+    const row = data as {
+      label?: unknown
+      full_access?: unknown
+      role_permissions?: Array<{ permission_key?: unknown }> | null
+    }
+
+    return {
+      label: typeof row.label === 'string' && row.label ? row.label : roleKey,
+      fullAccess: row.full_access === true,
+      permissions: (row.role_permissions ?? [])
+        .map((grant) => grant.permission_key)
+        .filter((key): key is string => typeof key === 'string')
+    }
+  } catch (error) {
+    logger.warn(SCOPE, 'Role lookup failed', error)
+    return empty
+  }
+}
+
+/**
+ * The role's permissions with this person's own exceptions applied.
+ *
+ * The same precedence the database uses, worked out again here so the window
+ * shows what the server will actually allow: an override wins over the role, in
+ * both directions. A full-access role never reaches this — nothing overrides
+ * everything.
+ *
+ * A failed read leaves the role's own answer standing. That is the honest
+ * fallback: it is what this account had before anybody made an exception, and
+ * the database is still the one deciding.
+ */
+async function applyOverrides(userId: string, fromRole: string[]): Promise<string[]> {
+  try {
+    const { data, error } = await getClient()
+      .from('user_permissions')
+      .select('permission_key, granted')
+      .eq('user_id', userId)
+
+    if (error) {
+      logger.warn(SCOPE, 'Could not read this account’s own permissions', error)
+      return fromRole
+    }
+
+    const rows = (data ?? []) as Array<{ permission_key?: unknown; granted?: unknown }>
+    if (rows.length === 0) return fromRole
+
+    const effective = new Set(fromRole)
+
+    for (const row of rows) {
+      if (typeof row.permission_key !== 'string') continue
+      if (row.granted === true) effective.add(row.permission_key)
+      else effective.delete(row.permission_key)
+    }
+
+    return [...effective]
+  } catch (error) {
+    logger.warn(SCOPE, 'Permission overrides lookup failed', error)
+    return fromRole
   }
 }
 

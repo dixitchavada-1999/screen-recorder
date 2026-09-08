@@ -53,10 +53,12 @@ extraResources:
 # ---------------------------------------------------------------------------
 win:
   icon: build/icon.png
+  # Installer only. A portable build cannot update itself — the updater refuses
+  # to overwrite a file somebody placed by hand — and building both made
+  # electron-builder open two GitHub releases at once, splitting the assets
+  # between them.
   target:
     - target: nsis
-      arch: [x64]
-    - target: portable
       arch: [x64]
   artifactName: ${productName}-${version}-windows-${arch}.${ext}
 
@@ -71,9 +73,6 @@ nsis:
   deleteAppDataOnUninstall: false
   # Refuse to install over a running instance rather than corrupting it.
   runAfterFinish: true
-
-portable:
-  artifactName: ${productName}-${version}-windows-portable.${ext}
 
 # ---------------------------------------------------------------------------
 # macOS
@@ -188,9 +187,18 @@ appImage:
 #
 # The repository has to be public. A private one would mean shipping a GitHub
 # token inside the application, which is the same as publishing it.
+#
+# `npm run release` builds and uploads in one step. It needs GH_TOKEN in the
+# environment - a token with `public_repo`, kept on the release machine and
+# never in the app.
 # ---------------------------------------------------------------------------
 
 publish:
   provider: github
-  owner: Dixit-Chavada-1999
-  repo: call-recorder
+  owner: dixitchavada-1999
+  repo: screen-recorder
+  # Left as a draft, and published by `scripts/publish-release.mjs` immediately
+  # afterwards. Asking GitHub for a published release outright fails with
+  # "Published releases must have a valid tag" — the tag does not exist yet, and
+  # it is publishing the draft that creates it.
+  releaseType: draft

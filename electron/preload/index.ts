@@ -15,7 +15,10 @@ import type {
   ScheduledCallStatus,
   SerializedError,
   SignInInput,
+  TaskCardInput,
+  TaskCardMove,
   TrayCommand,
+  UserPermission,
   UpdateStatus
 } from '@shared/types'
 
@@ -64,6 +67,7 @@ const api: RecorderApi = {
   permissions: {
     current: () => ipcRenderer.invoke(IPC.PERMISSIONS_GET),
     requestMicrophone: () => ipcRenderer.invoke(IPC.PERMISSIONS_REQUEST_MICROPHONE),
+    requestAccessibility: () => ipcRenderer.invoke(IPC.PERMISSIONS_REQUEST_ACCESSIBILITY),
     openSettings: (kind: PermissionKind) =>
       ipcRenderer.invoke(IPC.PERMISSIONS_OPEN_SETTINGS, kind)
   },
@@ -103,6 +107,57 @@ const api: RecorderApi = {
     create: (body: string, nexusIds: string[]) =>
       ipcRenderer.invoke(IPC.KPI_CREATE, body, nexusIds),
     remove: (id: string) => ipcRenderer.invoke(IPC.KPI_DELETE, id)
+  },
+
+  roles: {
+    list: () => ipcRenderer.invoke(IPC.ROLES_LIST),
+    catalogue: () => ipcRenderer.invoke(IPC.ROLES_CATALOGUE),
+
+    create: (label: string) => ipcRenderer.invoke(IPC.ROLES_CREATE, label),
+    rename: (key: string, label: string) => ipcRenderer.invoke(IPC.ROLES_RENAME, key, label),
+    remove: (key: string) => ipcRenderer.invoke(IPC.ROLES_DELETE, key),
+
+    setPermissions: (key: string, permissions: string[]) =>
+      ipcRenderer.invoke(IPC.ROLES_SET_PERMISSIONS, key, permissions),
+    setUserRole: (userId: string, roleKey: string) =>
+      ipcRenderer.invoke(IPC.ROLES_SET_USER, userId, roleKey),
+
+    userPermissions: (userId: string) =>
+      ipcRenderer.invoke(IPC.ROLES_USER_PERMISSIONS, userId),
+    setUserPermissions: (userId: string, overrides: UserPermission[]) =>
+      ipcRenderer.invoke(IPC.ROLES_SET_USER_PERMISSIONS, userId, overrides)
+  },
+
+  tasks: {
+    boards: () => ipcRenderer.invoke(IPC.TASKS_BOARDS),
+    board: (boardId: string) => ipcRenderer.invoke(IPC.TASKS_BOARD, boardId),
+    dueToday: () => ipcRenderer.invoke(IPC.TASKS_DUE_TODAY),
+
+    createBoard: (name: string) => ipcRenderer.invoke(IPC.TASKS_BOARD_CREATE, name),
+    renameBoard: (boardId: string, name: string) =>
+      ipcRenderer.invoke(IPC.TASKS_BOARD_RENAME, boardId, name),
+    deleteBoard: (boardId: string) => ipcRenderer.invoke(IPC.TASKS_BOARD_DELETE, boardId),
+    setBoardMembers: (boardId: string, nexusIds: string[]) =>
+      ipcRenderer.invoke(IPC.TASKS_BOARD_MEMBERS, boardId, nexusIds),
+
+    createList: (boardId: string, name: string) =>
+      ipcRenderer.invoke(IPC.TASKS_LIST_CREATE, boardId, name),
+    renameList: (listId: string, name: string) =>
+      ipcRenderer.invoke(IPC.TASKS_LIST_RENAME, listId, name),
+    deleteList: (listId: string) => ipcRenderer.invoke(IPC.TASKS_LIST_DELETE, listId),
+
+    createCard: (listId: string, input: TaskCardInput) =>
+      ipcRenderer.invoke(IPC.TASKS_CARD_CREATE, listId, input),
+    updateCard: (cardId: string, input: TaskCardInput) =>
+      ipcRenderer.invoke(IPC.TASKS_CARD_UPDATE, cardId, input),
+    moveCard: (cardId: string, move: TaskCardMove) =>
+      ipcRenderer.invoke(IPC.TASKS_CARD_MOVE, cardId, move),
+    deleteCard: (cardId: string) => ipcRenderer.invoke(IPC.TASKS_CARD_DELETE, cardId),
+
+    notes: (cardId: string) => ipcRenderer.invoke(IPC.TASKS_NOTES, cardId),
+    addNote: (cardId: string, body: string) =>
+      ipcRenderer.invoke(IPC.TASKS_NOTE_ADD, cardId, body),
+    deleteNote: (noteId: string) => ipcRenderer.invoke(IPC.TASKS_NOTE_DELETE, noteId)
   },
 
   calls: {
@@ -155,7 +210,8 @@ const api: RecorderApi = {
     hide: () => ipcRenderer.send(IPC.WINDOW_HIDE),
     excludeFromCapture: (excluded: boolean) =>
       ipcRenderer.invoke(IPC.WINDOW_EXCLUDE_FROM_CAPTURE, excluded),
-    onShown: (listener) => subscribe<void>(IPC.EVENT_WINDOW_SHOWN, listener)
+    onShown: (listener) => subscribe<void>(IPC.EVENT_WINDOW_SHOWN, listener),
+    onOpenSection: (listener) => subscribe<string>(IPC.EVENT_OPEN_SECTION, listener)
   },
 
   tray: {

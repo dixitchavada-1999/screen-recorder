@@ -172,7 +172,7 @@ export function CallManager(): React.JSX.Element {
   return (
     <div className="flex flex-col gap-4">
       <Card
-        title="Call Manager"
+        title="Calendar"
         description={
           view === 'day'
             ? dayLabel(selected)

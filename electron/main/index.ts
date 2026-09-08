@@ -27,6 +27,7 @@ import { startCallNotifier, stopCallNotifier } from './services/call-notifier'
 import { settingsStore } from './services/settings-store'
 import { HIDDEN_FLAG, applyLoginItem, wasLaunchedAtLogin } from './services/startup'
 import { cancelActiveTranscode } from './services/transcoder'
+import { applyShortcuts, releaseShortcuts } from './services/shortcuts'
 import { createTray, destroyTray } from './services/tray'
 import {
   applyTaskbarVisibility,
@@ -146,15 +147,29 @@ async function onReady(): Promise<void> {
 
   // The window took its initial taskbar state from the setting; keep it in step
   // when the toggle is flipped.
-  settingsStore.on('changed', (settings) =>
+  settingsStore.on('changed', (settings) => {
     applyTaskbarVisibility(settings.startup.showInTaskbar)
-  )
+
+    // Rebound on every settings change rather than only when the accelerator
+    // differs: it is one cheap call, and tracking the previous value here would
+    // be a second copy of state that can drift from the one in the store.
+    applyShortcuts()
+  })
 
   createTray({
     onShowWindow: showMainWindow,
     onHideWindow: hideMainWindow,
     onQuit: requestQuit
   })
+
+  /*
+   * The key that starts and stops a recording from anywhere.
+   *
+   * Registered here rather than with the window, because it has to work while
+   * there is no window on screen — which is most of the time this application
+   * is running.
+   */
+  applyShortcuts()
 
   // Call reminders. Safe before anyone signs in — it simply finds no schedule
   // to arm and tries again once a session exists.
@@ -308,6 +323,7 @@ async function finishShutdown(): Promise<void> {
     await stopActivityTracker()
     await stopInputCounter()
     stopScreenshotScheduler()
+    releaseShortcuts()
     destroyTray()
     cancelActiveTranscode()
     await closeAllSessions()

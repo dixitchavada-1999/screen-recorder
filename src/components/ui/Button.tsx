@@ -20,7 +20,11 @@ const VARIANTS: Record<ButtonVariant, string> = {
   stop: 'bg-surface text-ink border border-hairline hover:border-record hover:text-record-strong',
   secondary: 'bg-surface text-ink border border-hairline hover:bg-canvas-elevated',
   ghost: 'bg-transparent text-muted hover:bg-surface hover:text-ink',
-  danger: 'bg-transparent text-record-strong border border-record/40 hover:bg-record/10'
+  // Filled rather than outlined. A destructive action that looks like an empty
+  // outline reads as secondary, and Sign out is the one thing the Profile card
+  // is for — the tint gives it a shape to aim at without the shout of a solid
+  // red, which on a list of Delete buttons would be all anybody could see.
+  danger: 'bg-record/15 text-record-strong border border-record/40 hover:bg-record/25'
 }
 
 const SIZES: Record<ButtonSize, string> = {

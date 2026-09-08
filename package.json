@@ -1,6 +1,6 @@
 {
   "name": "screen-recorder",
-  "version": "1.1.1",
+  "version": "1.2.10",
   "description": "Lightweight OBS-like cross-platform screen recorder built with Electron, React, TypeScript and FFmpeg",
   "author": {
     "name": "Screen Recorder",
@@ -9,7 +9,7 @@
   "license": "MIT",
   "private": true,
   "//homepage": "Required by electron-builder to produce a .deb package. Change to your real project URL before distributing.",
-  "homepage": "https://example.com/screen-recorder",
+  "homepage": "https://github.com/dixitchavada-1999/screen-recorder",
   "main": "out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
@@ -29,8 +29,8 @@
     "build:mac": "npm run build && electron-builder --mac --publish never",
     "build:linux": "npm run build && electron-builder --linux --publish never",
     "build:all": "npm run build && electron-builder --win --linux --publish never",
-    "//release:win": "Builds and uploads to GitHub Releases as a draft. Needs GH_TOKEN in the environment.",
-    "release:win": "npm run build && electron-builder --win --publish always",
+    "//release:win": "Builds the Windows installer, uploads it to GitHub Releases and publishes it. Needs GH_TOKEN in the environment.",
+    "release:win": "npm run build:win && node scripts/publish-release.mjs",
     "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {
@@ -40,6 +40,9 @@
     "uiohook-napi": "^1.5.5"
   },
   "devDependencies": {
+    "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/sortable": "^10.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
     "@tailwindcss/vite": "^4.3.3",
     "@types/node": "^22.10.0",
     "@types/react": "^19.2.0",

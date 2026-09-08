@@ -19,6 +19,8 @@ export const IPC = {
   /* OS media permissions (macOS grants these per app; Windows and Linux do not) */
   PERMISSIONS_GET: 'permissions:get',
   PERMISSIONS_REQUEST_MICROPHONE: 'permissions:request-microphone',
+  /** macOS only: raises the prompt that points at Accessibility settings. */
+  PERMISSIONS_REQUEST_ACCESSIBILITY: 'permissions:request-accessibility',
   /** Opens the OS privacy pane the user has to flip the switch in. */
   PERMISSIONS_OPEN_SETTINGS: 'permissions:open-settings',
 
@@ -55,6 +57,47 @@ export const IPC = {
   KPI_LIST: 'kpi:list',
   KPI_CREATE: 'kpi:create',
   KPI_DELETE: 'kpi:delete',
+
+  /* Roles and permissions: who may do what, kept as data rather than code. */
+  ROLES_LIST: 'roles:list',
+  ROLES_CATALOGUE: 'roles:catalogue',
+  ROLES_CREATE: 'roles:create',
+  ROLES_RENAME: 'roles:rename',
+  ROLES_DELETE: 'roles:delete',
+  /** Replaces the whole grant set for one role. */
+  ROLES_SET_PERMISSIONS: 'roles:set-permissions',
+  /** Moves one person onto a different role. */
+  ROLES_SET_USER: 'roles:set-user',
+  /** One person's own exceptions to their role. */
+  ROLES_USER_PERMISSIONS: 'roles:user-permissions',
+  ROLES_SET_USER_PERMISSIONS: 'roles:set-user-permissions',
+
+  /* Task boards: the kanban module. */
+  TASKS_BOARDS: 'tasks:boards',
+  TASKS_BOARD_CREATE: 'tasks:board-create',
+  TASKS_BOARD_RENAME: 'tasks:board-rename',
+  TASKS_BOARD_DELETE: 'tasks:board-delete',
+  /** Replaces the whole membership list in one call. */
+  TASKS_BOARD_MEMBERS: 'tasks:board-members',
+  /** One board with its lists, cards and assignees. */
+  TASKS_BOARD: 'tasks:board',
+  /** Everything falling due today, across every project in reach. */
+  TASKS_DUE_TODAY: 'tasks:due-today',
+
+  TASKS_LIST_CREATE: 'tasks:list-create',
+  TASKS_LIST_RENAME: 'tasks:list-rename',
+  TASKS_LIST_DELETE: 'tasks:list-delete',
+
+  TASKS_CARD_CREATE: 'tasks:card-create',
+  TASKS_CARD_UPDATE: 'tasks:card-update',
+  /** Where it was dropped, as neighbours. The server works out the position. */
+  TASKS_CARD_MOVE: 'tasks:card-move',
+  TASKS_CARD_DELETE: 'tasks:card-delete',
+
+  /** The conversation on one task. */
+  TASKS_NOTES: 'tasks:notes',
+  TASKS_NOTE_ADD: 'tasks:note-add',
+  TASKS_NOTE_DELETE: 'tasks:note-delete',
 
   ROSTER_LIST: 'roster:list',
   /** Asks the server to refresh that cache. It refuses more than once a day. */
@@ -122,6 +165,8 @@ export const IPC = {
   EVENT_TRAY_COMMAND: 'event:tray-command',
   /** The window was just brought back from the tray, so the view resets home. */
   EVENT_WINDOW_SHOWN: 'event:window-shown',
+  /** The tray asking the window to land somewhere in particular. */
+  EVENT_OPEN_SECTION: 'event:open-section',
   /** A session arrived from outside the window, e.g. an email confirmation link. */
   EVENT_AUTH_CHANGED: 'event:auth-changed',
   /** That link could not be completed. */

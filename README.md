@@ -1,4 +1,4 @@
-# Call Recorder
+# Screen Recorder
 
 A desktop application for **Windows**, **macOS** and **Ubuntu Linux** that does
 three things for a team:
@@ -14,11 +14,6 @@ three things for a team:
 Built with Electron, React, TypeScript, Tailwind CSS and FFmpeg, on Supabase.
 Sign-in goes through the **Nexus partner API**; see
 [Accounts and Nexus](#accounts-and-nexus).
-
-> **The name.** The package is still called `screen-recorder` and the window
-> still says *Screen Recorder*. That is the application this started as, and
-> renaming it is a change to the installed app's identity — worth doing
-> deliberately rather than in passing.
 
 ---
 
