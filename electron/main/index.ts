@@ -27,6 +27,7 @@ import { startCallNotifier, stopCallNotifier } from './services/call-notifier'
 import { settingsStore } from './services/settings-store'
 import { HIDDEN_FLAG, applyLoginItem, wasLaunchedAtLogin } from './services/startup'
 import { cancelActiveTranscode } from './services/transcoder'
+import { startAccountWatch, stopAccountWatch } from './services/account-watch'
 import { applyShortcuts, releaseShortcuts } from './services/shortcuts'
 import { createTray, destroyTray } from './services/tray'
 import {
@@ -170,6 +171,15 @@ async function onReady(): Promise<void> {
    * is running.
    */
   applyShortcuts()
+
+  /*
+   * Keeps a running window's permissions honest.
+   *
+   * Does nothing while nobody is signed in, and catches the case a focus
+   * refresh cannot — a window left open and untouched while somebody's access
+   * is changed elsewhere.
+   */
+  startAccountWatch()
 
   // Call reminders. Safe before anyone signs in — it simply finds no schedule
   // to arm and tries again once a session exists.
@@ -323,6 +333,7 @@ async function finishShutdown(): Promise<void> {
     await stopActivityTracker()
     await stopInputCounter()
     stopScreenshotScheduler()
+    stopAccountWatch()
     releaseShortcuts()
     destroyTray()
     cancelActiveTranscode()

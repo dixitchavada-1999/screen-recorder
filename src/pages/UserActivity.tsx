@@ -35,6 +35,14 @@ export function UserActivity(): React.JSX.Element {
   const { user, can } = useAuth()
   const { push } = useToast()
 
+  /*
+   * Seeing the team and setting what it records are separate permissions, so
+   * they can now be held apart. Without `team.manage` the switches are shown
+   * as they stand and cannot be moved — the database refuses the write either
+   * way, and a switch that flips back with an error is a worse way to find out.
+   */
+  const managesTracking = can('team.manage')
+
   // The roles a person can be moved onto. Read here rather than passed in,
   // because this is the only screen that hands one out.
   const roles = useRoles()
@@ -133,7 +141,7 @@ export function UserActivity(): React.JSX.Element {
                   <Toggle
                     label="Tracking"
                     checked={person.trackingEnabled}
-                    disabled={busy === person.id}
+                    disabled={busy === person.id || !managesTracking}
                     onCheckedChange={(trackingEnabled) =>
                       void change(
                         person,
@@ -148,7 +156,7 @@ export function UserActivity(): React.JSX.Element {
                   <Toggle
                     label="Screenshots"
                     checked={person.screenshotsEnabled}
-                    disabled={busy === person.id || !person.trackingEnabled}
+                    disabled={busy === person.id || !person.trackingEnabled || !managesTracking}
                     onCheckedChange={(screenshotsEnabled) =>
                       void change(
                         person,

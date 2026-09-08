@@ -120,6 +120,19 @@ export interface RecorderApi {
      */
     session(): Promise<IpcResult<AuthUser | null>>
     /**
+     * The same account, with its role and permissions read again.
+     *
+     * For catching up after somebody's access was changed while their window
+     * was open. Leaves the session alone — this is not a re-authentication.
+     */
+    refresh(): Promise<IpcResult<AuthUser | null>>
+    /**
+     * Fires when the account's role or permissions change while it is signed
+     * in, so a window that nobody has touched still stops offering what it may
+     * no longer do.
+     */
+    onAccessChanged(listener: (account: AuthUser) => void): Unsubscribe
+    /**
      * Checks the credentials with Nexus and starts a session.
      *
      * There is no sign-up, rename or password change beside it: accounts and

@@ -100,15 +100,16 @@ export async function listCalls(
 }
 
 /**
- * Whether the signed-in person runs the calls.
+ * Whether the signed-in person sees more than their own calls.
  *
- * The same two roles the `is_call_manager` policy names. Kept in step with it
- * by hand: this decides what to ask for, the database decides what to hand
- * back, and the second is the one that has to be right.
+ * The same question the select policy asks. Kept in step with it by hand: this
+ * decides what to ask for, the database decides what to hand back, and the
+ * second is the one that has to be right.
  */
 function canManageCalls(): boolean {
-  const role = currentUser()?.role
-  return role === 'admin' || role === 'super_admin'
+  const user = currentUser()
+  if (!user) return false
+  return user.fullAccess || user.permissions.includes('calendar.view_all')
 }
 
 export async function createCall(input: ScheduledCallInput): Promise<ScheduledCall> {

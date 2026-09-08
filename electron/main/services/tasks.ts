@@ -278,7 +278,7 @@ export async function createBoard(name: string): Promise<TaskBoard> {
     .from('task_boards')
     .insert({ id, name: clean, created_by: user.id })
 
-  if (error) throw translate(error, 'open that project')
+  if (error) throw translate(error, 'add that project')
 
   const { error: memberError } = await supabase
     .from('task_board_members')
@@ -319,20 +319,28 @@ export async function renameBoard(boardId: string, name: string): Promise<void> 
   requireUser()
   const clean = text(name, 80, 'Give the project a name.', 'That project name is too long.')
 
-  const { error } = await getSupabase()
+  const { data, error } = await getSupabase()
     .from('task_boards')
     .update({ name: clean })
     .eq('id', boardId)
+    .select('id')
 
   if (error) throw translate(error, 'rename that project')
+  if ((data ?? []).length === 0) throw refused('rename that project')
 }
 
 /** Takes the lists and cards with it — the foreign keys cascade. */
 export async function deleteBoard(boardId: string): Promise<void> {
   requireUser()
 
-  const { error } = await getSupabase().from('task_boards').delete().eq('id', boardId)
+  const { data, error } = await getSupabase()
+    .from('task_boards')
+    .delete()
+    .eq('id', boardId)
+    .select('id')
+
   if (error) throw translate(error, 'remove that project')
+  if ((data ?? []).length === 0) throw refused('remove that project')
 
   logger.info(SCOPE, 'Project removed', { id: boardId })
 }
@@ -430,16 +438,28 @@ export async function renameList(listId: string, name: string): Promise<void> {
   requireUser()
   const clean = text(name, 60, 'Give the section a name.', 'That section name is too long.')
 
-  const { error } = await getSupabase().from('task_lists').update({ name: clean }).eq('id', listId)
+  const { data, error } = await getSupabase()
+    .from('task_lists')
+    .update({ name: clean })
+    .eq('id', listId)
+    .select('id')
+
   if (error) throw translate(error, 'rename that section')
+  if ((data ?? []).length === 0) throw refused('rename that section')
 }
 
 /** Takes the tasks in it with it. */
 export async function deleteList(listId: string): Promise<void> {
   requireUser()
 
-  const { error } = await getSupabase().from('task_lists').delete().eq('id', listId)
+  const { data, error } = await getSupabase()
+    .from('task_lists')
+    .delete()
+    .eq('id', listId)
+    .select('id')
+
   if (error) throw translate(error, 'remove that section')
+  if ((data ?? []).length === 0) throw refused('remove that section')
 }
 
 /* -------------------------------------------------------------------------- */
@@ -521,7 +541,7 @@ export async function updateCard(cardId: string, input: TaskCardInput): Promise<
     )
     .single()
 
-  if (error) throw translate(error, 'save that card')
+  if (error) throw translate(error, 'change that task')
 
   const card = data as CardRow
 
@@ -581,7 +601,7 @@ export async function moveCard(cardId: string, move: TaskCardMove): Promise<Task
     )
     .single()
 
-  if (error) throw translate(error, 'move that card')
+  if (error) throw translate(error, 'move that task')
 
   const card = data as CardRow
   const assignees = (await readCardAssignees([card.id])).get(card.id) ?? []
@@ -592,8 +612,14 @@ export async function moveCard(cardId: string, move: TaskCardMove): Promise<Task
 export async function deleteCard(cardId: string): Promise<void> {
   requireUser()
 
-  const { error } = await getSupabase().from('task_cards').delete().eq('id', cardId)
-  if (error) throw translate(error, 'remove that card')
+  const { data, error } = await getSupabase()
+    .from('task_cards')
+    .delete()
+    .eq('id', cardId)
+    .select('id')
+
+  if (error) throw translate(error, 'remove that task')
+  if ((data ?? []).length === 0) throw refused('remove that task')
 }
 
 /* -------------------------------------------------------------------------- */
@@ -685,8 +711,14 @@ export async function addCardNote(cardId: string, body: string): Promise<TaskNot
 export async function deleteCardNote(noteId: string): Promise<void> {
   requireUser()
 
-  const { error } = await getSupabase().from('task_card_notes').delete().eq('id', noteId)
+  const { data, error } = await getSupabase()
+    .from('task_card_notes')
+    .delete()
+    .eq('id', noteId)
+    .select('id')
+
   if (error) throw translate(error, 'remove that note')
+  if ((data ?? []).length === 0) throw refused('remove that note')
 }
 
 /**
@@ -1188,9 +1220,38 @@ function requireProjectCreator(): { id: string; name: string; nexusId: string | 
 function translate(error: { message: string; code?: string }, what: string): AppError {
   logger.warn(SCOPE, `Could not ${what}`, error)
 
+  /*
+   * `PGRST116` is a refusal wearing the wrong clothes.
+   *
+   * A write the policies do not allow does not raise: it simply matches no
+   * rows. Asking for the changed row back then fails with "Cannot coerce the
+   * result to a single JSON object", which is true, unhelpful, and says nothing
+   * about the actual reason — that this person may not do this.
+   */
+  if (error.code === 'PGRST116') return refused(what)
+
   return new AppError(
     ERROR_CODES.UNKNOWN,
     `Could not ${what}.`,
     error.message || 'The server did not say why.'
+  )
+}
+
+/**
+ * A write the database would not carry out.
+ *
+ * Deletes and updates are the quiet ones: with no row matched they report
+ * success having done nothing, so the window removes a task from the screen
+ * that is still in the table and comes back on the next read. Every write that
+ * can be refused therefore asks for what it changed, and calls this when the
+ * answer is nothing.
+ */
+function refused(what: string): AppError {
+  logger.info(SCOPE, `Refused: ${what}`)
+
+  return new AppError(
+    ERROR_CODES.AUTH_FAILED,
+    `You cannot ${what}.`,
+    'Your permissions may have changed since this window was opened.'
   )
 }

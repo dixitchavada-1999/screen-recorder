@@ -26,7 +26,7 @@ interface ProfileRow {
 const COLUMNS = 'id, email, full_name, role, tracking_enabled, screenshots_enabled'
 
 export async function listTrackedPeople(): Promise<TrackedPerson[]> {
-  requireAdmin()
+  requirePermission('team.view', 'see the team')
 
   const { data, error } = await getSupabase()
     .from('profiles')
@@ -49,7 +49,7 @@ export async function setTrackingPolicyFor(
   userId: string,
   patch: { trackingEnabled?: boolean; screenshotsEnabled?: boolean }
 ): Promise<TrackedPerson> {
-  requireAdmin()
+  requirePermission('team.manage', 'change the tracking policy')
 
   const update: Record<string, boolean> = {}
   if (patch.trackingEnabled !== undefined) {
@@ -75,17 +75,25 @@ export async function setTrackingPolicyFor(
 
 /* -------------------------------------------------------------------------- */
 
-function requireAdmin(): void {
+/**
+ * The gate in front of the Team screen.
+ *
+ * Two permissions and not one, because reading the list and changing what it
+ * records are different acts: `team.view` is what the screen is, `team.manage`
+ * is what it does. The policies draw the same line, and a check here that drew
+ * a coarser one would refuse something the database allows.
+ */
+function requirePermission(permission: string, what: string): void {
   const user = currentUser()
 
   if (!user) {
-    throw new AppError(ERROR_CODES.AUTH_FAILED, 'Sign in to manage tracking.')
+    throw new AppError(ERROR_CODES.AUTH_FAILED, `Sign in to ${what}.`)
   }
 
-  if (user.role !== 'super_admin') {
+  if (!user.fullAccess && !user.permissions.includes(permission)) {
     throw new AppError(
       ERROR_CODES.AUTH_FAILED,
-      'Only a super admin can manage tracking.',
+      `You cannot ${what}.`,
       'The database refuses this regardless of what the window shows.'
     )
   }

@@ -75,16 +75,21 @@ export function CallManager(): React.JSX.Element {
   }, [view, selected, month])
 
   const { push } = useToast()
-  const { user } = useAuth()
+  const { can } = useAuth()
 
-  /**
-   * Whether this person runs the calls rather than only attends them.
+  /*
+   * Two different questions, and they were one answer before.
    *
-   * The same two roles the `is_call_manager` policy names, and the answer to
-   * three questions at once: what the second tab asks, whether a call somebody
-   * else arranged opens for editing, and whether it can be deleted.
+   * Seeing everybody's calls and being able to change them are separate
+   * permissions now, so somebody can be given oversight of the diary without
+   * being given the right to move other people's meetings.
+   *
+   * Neither covers a person's own calls: those stay theirs to change, here and
+   * in the policy, with or without any of this.
    */
-  const managesCalls = user?.role === 'super_admin' || user?.role === 'admin'
+  const seesEveryCall = can('calendar.view_all')
+  const managesCalls = can('calendar.manage')
+  const canSchedule = can('calendar.create')
 
   /*
    * The second tab, read as the role that is asking means it.
@@ -93,7 +98,7 @@ export function CallManager(): React.JSX.Element {
    * page is open — the profile loads a moment behind the session — cannot leave
    * a tab selected that is no longer offered.
    */
-  const scope: CallScope = managesCalls && rawScope === 'scheduled-by-me' ? 'all' : rawScope
+  const scope: CallScope = seesEveryCall && rawScope === 'scheduled-by-me' ? 'all' : rawScope
 
   const {
     calls,
@@ -182,7 +187,7 @@ export function CallManager(): React.JSX.Element {
         }
         actions={
           <>
-            <ScopeTabs scope={scope} onChange={setScope} canSeeEveryone={managesCalls} />
+            <ScopeTabs scope={scope} onChange={setScope} canSeeEveryone={seesEveryCall} />
             <ViewTabs view={view} onChange={setView} />
 
             <Button
@@ -216,9 +221,11 @@ export function CallManager(): React.JSX.Element {
               Refresh
             </Button>
 
-            <Button size="sm" variant="primary" onClick={() => openNew()}>
-              Schedule call
-            </Button>
+            {canSchedule && (
+              <Button size="sm" variant="primary" onClick={() => openNew()}>
+                Schedule call
+              </Button>
+            )}
           </>
         }
       >
@@ -293,7 +300,9 @@ export function CallManager(): React.JSX.Element {
         >
           {dayCalls.length === 0 ? (
             <p className="text-xs leading-relaxed text-faint">
-              Pick a day on the calendar and press Schedule call to put something on it.
+              {canSchedule
+                ? 'Pick a day on the calendar and press Schedule call to put something on it.'
+                : 'Nothing on this day.'}
             </p>
           ) : (
             <ul className="flex flex-col gap-2">

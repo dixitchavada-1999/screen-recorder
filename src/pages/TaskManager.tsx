@@ -114,6 +114,21 @@ function BoardPicker({
   const [naming, setNaming] = useState(false)
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
+
+  /*
+   * Its own flag rather than the hook's `loading`, which is true only during the
+   * first read and also decides whether a placeholder is shown — reusing it
+   * would blank the list somebody is looking at. This spins the button.
+   */
+  const reload = async (): Promise<void> => {
+    setRefreshing(true)
+    try {
+      await boards.refresh()
+    } finally {
+      setRefreshing(false)
+    }
+  }
 
   const create = async (): Promise<void> => {
     const clean = name.trim()
@@ -142,13 +157,9 @@ function BoardPicker({
       description="Projects you are on. Open one to see what is on it."
       actions={
         <>
-          <button
-            type="button"
-            onClick={() => void boards.refresh()}
-            className="text-xs text-muted transition-colors hover:text-ink"
-          >
+          <Button size="sm" variant="ghost" loading={refreshing} onClick={() => void reload()}>
             Refresh
-          </button>
+          </Button>
 
           {canOpenBoards && !naming && (
             <Button size="sm" variant="primary" onClick={() => setNaming(true)}>
@@ -258,6 +269,16 @@ function BoardView({
   const [addingList, setAddingList] = useState(false)
   const [listName, setListName] = useState('')
   const [dragging, setDragging] = useState<TaskCard | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
+
+  const reload = async (): Promise<void> => {
+    setRefreshing(true)
+    try {
+      await board.refresh()
+    } finally {
+      setRefreshing(false)
+    }
+  }
   const [confirmBoard, setConfirmBoard] = useState(false)
   /** The section waiting on an answer, with the count that makes the question real. */
   const [confirmSection, setConfirmSection] = useState<{ id: string; name: string; tasks: number } | null>(null)
@@ -384,6 +405,15 @@ function BoardView({
             All projects
           </button>
 
+          {/*
+            A board is the one screen several people are changing at once — a
+            task moved on somebody else's machine is not news this window hears
+            about until it asks.
+          */}
+          <Button size="sm" variant="ghost" loading={refreshing} onClick={() => void reload()}>
+            Refresh
+          </Button>
+
           {rights.manageMembers && (
             <Button size="sm" variant="secondary" onClick={() => setMembersOpen(true)}>
               Members
@@ -497,6 +527,7 @@ function BoardView({
       <TaskCardDialog
         target={cardTarget}
         canDelete={canDeleteTask}
+        members={detail?.board.members ?? []}
         onClose={() => setCardTarget(null)}
         onCreate={board.addCard}
         onSave={board.saveCard}

@@ -74,6 +74,8 @@ const api: RecorderApi = {
 
   auth: {
     session: () => ipcRenderer.invoke(IPC.AUTH_SESSION),
+    refresh: () => ipcRenderer.invoke(IPC.AUTH_REFRESH),
+    onAccessChanged: (listener) => subscribe<AuthUser>(IPC.EVENT_ACCOUNT_CHANGED, listener),
     signIn: (input: SignInInput) => ipcRenderer.invoke(IPC.AUTH_SIGN_IN, input),
     signOut: () => ipcRenderer.invoke(IPC.AUTH_SIGN_OUT),
     signOutEverywhere: () => ipcRenderer.invoke(IPC.AUTH_SIGN_OUT_ALL),

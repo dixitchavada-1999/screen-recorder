@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import type { TaskPerson } from '@shared/types'
 import { useRoster } from '@/hooks/useRoster'
 import { cn } from '@/utils/cn'
 
@@ -19,16 +20,33 @@ interface PeoplePickerProps {
    * picking people and where a closed list would be a click in the way.
    */
   collapsible?: boolean
+  /**
+   * Who may be chosen, when that is narrower than the whole staff roster.
+   *
+   * A task can only sensibly be given to somebody who is on the project it is
+   * on: anybody else could be assigned it and would then not be able to open
+   * it, because the policies do not let them see the project at all. Passing
+   * the project's members here makes the picker agree with the database.
+   *
+   * Left out — as the members dialog leaves it out — the whole roster is
+   * offered, which is right for deciding who joins a project in the first
+   * place.
+   */
+  people?: TaskPerson[]
 }
 
 /**
- * Choosing people from the Nexus staff roster.
+ * Choosing people.
  *
- * The roster, not this app's accounts — the same identity every other feature
- * here is keyed by. Somebody can be given work, or put on a board, before they
- * have ever opened the recorder, and it is waiting for them when they do.
- * Leavers are left out: `useRoster` keeps them so old records still show a name,
- * but nothing new should be addressed to somebody who has gone.
+ * From the Nexus staff roster by default — that identity, not this app's
+ * accounts, is what every other feature here is keyed by. Somebody can be given
+ * work, or put on a project, before they have ever opened the recorder, and it
+ * is waiting for them when they do. Leavers are left out: `useRoster` keeps them
+ * so old records still show a name, but nothing new should be addressed to
+ * somebody who has gone.
+ *
+ * From a narrower list when `people` is given — the project's members, when
+ * choosing who a task is for.
  *
  * The list is always open, and sits in the flow rather than floating over it.
  * A dropdown here was worse than useless: it is absolutely positioned, the
@@ -44,11 +62,35 @@ export function PeoplePicker({
   onChange,
   placeholder = 'Search by name',
   emptyLabel = 'nobody yet',
-  collapsible = false
+  collapsible = false,
+  people: only
 }: PeoplePickerProps): React.JSX.Element {
   const [filter, setFilter] = useState('')
   const [open, setOpen] = useState(!collapsible)
-  const { people, loading } = useRoster()
+
+  // Read either way — the hook is cached, and asking for it conditionally is
+  // not something a hook allows.
+  const roster = useRoster()
+
+  /*
+   * Anybody already chosen stays choosable even once they are off the list.
+   *
+   * Somebody assigned a task and later taken off the project is still on that
+   * task, and their chip has to keep their name — otherwise it reads as a bare
+   * id and cannot be recognised, let alone removed on purpose.
+   */
+  const people = useMemo(() => {
+    if (!only) return roster.people
+
+    const known = new Set(only.map((person) => person.nexusId))
+    const strays = roster.all.filter(
+      (person) => selected.includes(person.nexusId) && !known.has(person.nexusId)
+    )
+
+    return [...only, ...strays].sort((a, b) => a.name.localeCompare(b.name))
+  }, [only, roster.people, roster.all, selected])
+
+  const loading = only ? false : roster.loading
 
   /*
    * Back to the top whenever the search changes.

@@ -6,11 +6,11 @@ import { currentUser, getSupabase } from './auth'
 const SCOPE = 'kpi'
 
 /**
- * KPI notes: what a super admin has put on somebody's dashboard.
+ * KPI notes: what somebody who sets OKRs has put on a dashboard.
  *
  * Everything here runs as the signed-in account, so row level security is what
- * actually decides the answers — every note for a super admin, only the ones
- * addressed to you for anybody else. The `requireAdmin` checks below turn a
+ * actually decides the answers — every note for whoever holds `okr.manage`,
+ * only the ones addressed to you for anybody else. The checks below turn a
  * refusal into a sentence somebody can act on; they are not the protection.
  */
 
@@ -42,7 +42,7 @@ export async function listKpiNotes(): Promise<KpiNote[]> {
   const rows = (data ?? []) as NoteRow[]
   if (rows.length === 0) return []
 
-  const audiences = isSuperAdmin() ? await readAudiences(rows.map((row) => row.id)) : new Map()
+  const audiences = managesOkrs() ? await readAudiences(rows.map((row) => row.id)) : new Map()
 
   return rows.map((row) => ({
     id: row.id,
@@ -62,7 +62,7 @@ export async function listKpiNotes(): Promise<KpiNote[]> {
  * sent.
  */
 export async function createKpiNote(body: string, nexusIds: string[]): Promise<KpiNote> {
-  const user = requireAdmin()
+  const user = requireOkrManager()
 
   const text = body.trim()
   if (!text) {
@@ -117,7 +117,7 @@ export async function createKpiNote(body: string, nexusIds: string[]): Promise<K
 
 /** Removes a note from every dashboard it was on. The audience goes with it. */
 export async function deleteKpiNote(id: string): Promise<void> {
-  requireAdmin()
+  requireOkrManager()
 
   const { error } = await getSupabase().from('kpi_notes').delete().eq('id', id)
   if (error) throw translate(error, 'remove the note')
@@ -208,13 +208,13 @@ function requireUser(): { id: string; name: string } {
   return { id: user.id, name: user.name }
 }
 
-function requireAdmin(): { id: string; name: string } {
+function requireOkrManager(): { id: string; name: string } {
   const user = requireUser()
 
-  if (!isSuperAdmin()) {
+  if (!managesOkrs()) {
     throw new AppError(
       ERROR_CODES.AUTH_FAILED,
-      'Only a super admin can set a KPI.',
+      'You cannot set an OKR for somebody else.',
       'The database refuses this regardless of what the window shows.'
     )
   }
@@ -222,8 +222,17 @@ function requireAdmin(): { id: string; name: string } {
   return user
 }
 
-function isSuperAdmin(): boolean {
-  return currentUser()?.role === 'super_admin'
+/**
+ * Whether this account sets OKRs for other people.
+ *
+ * Asked of the permission rather than the role, because the policies now do —
+ * a check here that still asked for `super_admin` would refuse something the
+ * database allows the moment somebody is granted it.
+ */
+function managesOkrs(): boolean {
+  const user = currentUser()
+  if (!user) return false
+  return user.fullAccess || user.permissions.includes('okr.manage')
 }
 
 function translate(error: { message: string; code?: string }, what: string): AppError {

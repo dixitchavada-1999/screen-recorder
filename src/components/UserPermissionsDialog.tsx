@@ -11,6 +11,9 @@ import { cn } from '@/utils/cn'
 const MODULE_LABELS: Record<string, string> = {
   tasks: 'Task Manager',
   project: 'Inside a project',
+  calendar: 'Calendar',
+  team: 'Team',
+  okr: 'OKRs',
   roles: 'Roles'
 }
 

@@ -36,23 +36,21 @@ type Section =
 interface SectionDefinition {
   id: Section
   label: string
-  /** Only shown to a super admin. The server refuses the data regardless. */
-  adminOnly?: boolean
   /**
    * Only shown to somebody holding this permission.
    *
-   * The newer of the two, and the one to reach for: `adminOnly` is a role test,
-   * and two people on the same role can need different answers. Either way the
-   * menu is a courtesy — the database refuses what it refuses.
+   * Every entry that is not for everybody now names one. The menu is a courtesy
+   * either way — the database refuses what it refuses — but a menu built on
+   * roles could not be handed out from the Roles screen, and this one can.
    */
   permission?: string
 }
 
 const SECTIONS: ReadonlyArray<SectionDefinition> = [
   { id: 'dashboard', label: 'Dashboard' },
-  { id: 'calls', label: 'Calendar' },
+  { id: 'calls', label: 'Calendar', permission: 'calendar.view' },
   { id: 'tasks', label: 'Task Manager', permission: 'tasks.view' },
-  { id: 'activity', label: 'Team', adminOnly: true },
+  { id: 'activity', label: 'Team', permission: 'team.view' },
   { id: 'roles', label: 'Roles', permission: 'roles.view' },
   { id: 'settings', label: 'Settings' },
   { id: 'profile', label: 'Profile' }
@@ -92,7 +90,6 @@ export function AccountPage({
   // between the two.
   if (!user) return null
 
-  const isSuperAdmin = user.role === 'super_admin'
   /*
    * Honoured only if the screen is one this account is actually offered — a
    * request from outside is a request, not an override, and the menu is already
@@ -106,7 +103,7 @@ export function AccountPage({
 
   const visibleSections = SECTIONS.filter(
     (item) =>
-      (!item.adminOnly || isSuperAdmin) && (!item.permission || can(item.permission))
+      !item.permission || can(item.permission)
   )
 
   const handleSignOut = async (): Promise<void> => {
@@ -183,13 +180,13 @@ export function AccountPage({
           column instead of scrolling, and pushes the menu off the window. */}
       <div className="min-w-0">
         {section === 'dashboard' && <Dashboard />}
-        {section === 'calls' && <CallManager />}
+        {section === 'calls' && can('calendar.view') && <CallManager />}
         {section === 'tasks' && can('tasks.view') && <TaskManager />}
         {/*
           Guarded on the role as well as on the menu: landing here by any other
           route — a stale state, a future deep link — must not render it.
         */}
-        {section === 'activity' && isSuperAdmin && <UserActivity />}
+        {section === 'activity' && can('team.view') && <UserActivity />}
         {section === 'roles' && can('roles.view') && <RolesPage />}
         {section === 'settings' && <AccountSettings currentName={user.name} />}
         {section === 'profile' && (
@@ -308,13 +305,36 @@ function DueToday(): React.JSX.Element | null {
 }
 
 function Dashboard(): React.JSX.Element {
-  const { user, can } = useAuth()
+  const { can } = useAuth()
   const { notes, loading, error, refresh, create, remove } = useKpiNotes()
   const update = useAppUpdate()
   const { push } = useToast()
   const [composing, setComposing] = useState(false)
 
-  const isSuperAdmin = user?.role === 'super_admin'
+  /*
+   * Its own flag, not the hook's `loading`.
+   *
+   * That one is true only while the first read is in flight, and it also decides
+   * whether the card shows a placeholder instead of its contents — so reusing it
+   * for a manual refresh would blank the OKRs somebody is looking at. This spins
+   * the button and leaves the screen alone.
+   */
+  const [refreshing, setRefreshing] = useState(false)
+
+  const reload = async (): Promise<void> => {
+    setRefreshing(true)
+    try {
+      await refresh()
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
+  /*
+   * Setting an OKR for somebody else, as opposed to reading the ones set for
+   * you — which comes with having an account and needs no permission at all.
+   */
+  const manages = can('okr.manage')
 
   const drop = async (note: KpiNote): Promise<void> => {
     try {
@@ -343,17 +363,23 @@ function Dashboard(): React.JSX.Element {
       <Card
         title="Dashboard"
         description={
-          isSuperAdmin
+          manages
             ? 'Every OKR and note, and who each one is for'
             : 'The OKRs and notes set for you'
         }
         actions={
           <div className="flex items-center gap-1">
-            <Button size="sm" variant="ghost" onClick={() => void refresh()} disabled={loading}>
+            <Button
+              size="sm"
+              variant="ghost"
+              loading={refreshing}
+              disabled={loading}
+              onClick={() => void reload()}
+            >
               Refresh
             </Button>
 
-            {isSuperAdmin && (
+            {manages && (
               <Button size="sm" variant="primary" onClick={() => setComposing(true)}>
                 + Add OKR
               </Button>
@@ -373,7 +399,7 @@ function Dashboard(): React.JSX.Element {
 
         {!error && !loading && notes.length === 0 && (
           <p className="text-xs leading-relaxed text-faint">
-            {isSuperAdmin
+            {manages
               ? 'No OKRs yet. Add one and it appears on the dashboard of everybody you pick.'
               : 'Nothing set for you yet. Anything your administrator adds will show up here.'}
           </p>
@@ -384,7 +410,7 @@ function Dashboard(): React.JSX.Element {
           the audience and a Remove; a recipient's is just the note and when it
           was set, since the audience there is only ever themselves.
         */}
-        {notes.length > 0 && isSuperAdmin && (
+        {notes.length > 0 && manages && (
           <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             {notes.map((note) => (
               <li
@@ -438,7 +464,7 @@ function Dashboard(): React.JSX.Element {
           </ul>
         )}
 
-        {notes.length > 0 && !isSuperAdmin && (
+        {notes.length > 0 && !manages && (
           <ul className="flex flex-col gap-2.5">
             {notes.map((note) => (
               <li
@@ -468,7 +494,7 @@ function Dashboard(): React.JSX.Element {
       */}
       {can('tasks.view') && <DueToday />}
 
-      {isSuperAdmin && (
+      {manages && (
         <KpiDialog
           open={composing}
           onClose={() => setComposing(false)}
@@ -594,118 +620,10 @@ function WindowSettings(): React.JSX.Element {
         label="Show in taskbar"
         description="Adds a taskbar button for the window. The tray icon stays either way."
       />
-
-      <div className="mt-4 border-t border-hairline pt-4">
-        <ShortcutField
-          value={settings.shortcuts.toggleRecording}
-          onChange={(toggleRecording) => updateSettings({ shortcuts: { toggleRecording } })}
-        />
-      </div>
     </Card>
   )
 }
 
-/**
- * The key that starts and stops a recording from anywhere on the machine.
- *
- * Captured by pressing it rather than typed, because the thing being asked for
- * is a key combination and the only unambiguous way to name one is to press it.
- * Typing `Ctrl+Space` into a box means writing the accelerator syntax correctly
- * and finding out it was wrong only when it silently fails to bind.
- *
- * Worth knowing, and said on screen: a global key is taken from every other
- * application while this one runs. Ctrl+Space is what Windows uses to switch
- * input methods and what most editors use for autocomplete.
- */
-function ShortcutField({
-  value,
-  onChange
-}: {
-  value: string
-  onChange: (accelerator: string) => void
-}): React.JSX.Element {
-  const [capturing, setCapturing] = useState(false)
-
-  return (
-    <>
-      <p className="text-sm font-medium text-ink">Start and stop recording</p>
-      <p className="mt-0.5 text-xs leading-relaxed text-muted">
-        Works anywhere on this machine, with the app in the tray — and takes the key from every
-        other application while it runs.
-      </p>
-
-      <div className="mt-2 flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          onClick={() => setCapturing(true)}
-          onBlur={() => setCapturing(false)}
-          onKeyDown={(event) => {
-            if (!capturing) return
-            event.preventDefault()
-
-            if (event.key === 'Escape') {
-              setCapturing(false)
-              return
-            }
-
-            const accelerator = toAccelerator(event)
-            if (!accelerator) return
-
-            onChange(accelerator)
-            setCapturing(false)
-          }}
-          className={cn(
-            'min-w-40 rounded-xl border px-3 py-2 font-mono text-sm transition-colors',
-            capturing
-              ? 'border-accent bg-surface text-accent-strong'
-              : 'border-hairline bg-surface text-ink hover:border-faint'
-          )}
-        >
-          {capturing ? 'Press the keys…' : readableAccelerator(value) || 'None'}
-        </button>
-
-        {value && !capturing && (
-          <Button size="sm" variant="ghost" onClick={() => onChange('')}>
-            Turn off
-          </Button>
-        )}
-      </div>
-    </>
-  )
-}
-
-/**
- * A key press as Electron's accelerator syntax, or null while it is only a
- * modifier.
- *
- * Modifiers arrive as key presses of their own, and binding "Control" alone
- * would swallow every shortcut on the machine — so a press without a real key
- * beside it is ignored rather than accepted.
- */
-function toAccelerator(event: React.KeyboardEvent): string | null {
-  const parts: string[] = []
-  if (event.ctrlKey) parts.push('Control')
-  if (event.altKey) parts.push('Alt')
-  if (event.shiftKey) parts.push('Shift')
-  if (event.metaKey) parts.push('Super')
-
-  const key = event.key
-
-  if (['Control', 'Alt', 'Shift', 'Meta', 'OS'].includes(key)) return null
-
-  // Electron names the space bar rather than taking the character itself.
-  const named = key === ' ' ? 'Space' : key.length === 1 ? key.toUpperCase() : key
-
-  // A bare letter would bind that letter across the whole machine.
-  if (parts.length === 0) return null
-
-  return [...parts, named].join('+')
-}
-
-/** The same thing, as somebody would read it out. */
-function readableAccelerator(accelerator: string): string {
-  return accelerator.replace(/Control/g, 'Ctrl').replace(/\+/g, ' + ')
-}
 
 /**
  * When the Call Manager warns about an upcoming call.

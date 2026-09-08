@@ -38,6 +38,7 @@ import { handled } from '../lib/errors'
 import { logger } from '../lib/logger'
 import {
   currentUser,
+  refreshAccount,
   restoreSession,
   signIn,
   signOut,
@@ -280,6 +281,11 @@ export function registerIpcHandlers(): void {
    * caller now awaits the same restore.
    */
   let sessionRestore: Promise<AuthUser | null> | null = null
+
+  ipcMain.handle(
+    IPC.AUTH_REFRESH,
+    handled(SCOPE, (): Promise<AuthUser | null> => refreshAccount())
+  )
 
   ipcMain.handle(
     IPC.AUTH_SESSION,

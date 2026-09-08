@@ -46,6 +46,17 @@ export async function restoreSession(): Promise<AuthUser | null> {
   return call(() => window.api.auth.session())
 }
 
+/**
+ * The same account, with its role and permissions read again.
+ *
+ * Separate from `restoreSession` because that one is memoised in the main
+ * process — it answers the first caller and hands everybody afterwards the same
+ * reply, which is right for a startup race and useless for catching up.
+ */
+export async function refreshAccount(): Promise<AuthUser | null> {
+  return call(() => window.api.auth.refresh())
+}
+
 /* -------------------------------------------------------------------------- */
 
 /** Re-labels IPC failures as `AuthError`, which the dialog knows how to show. */

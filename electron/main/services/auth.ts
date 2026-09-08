@@ -210,6 +210,25 @@ function isRetryable(error: { status?: number; name?: string } | null): boolean 
   return status === 0 || status >= 500
 }
 
+/**
+ * Re-reads what the signed-in account is allowed to do.
+ *
+ * Deliberately not `restoreSession`. That refreshes the token — a round trip
+ * that also rotates it — and, more to the point, the IPC handler memoises its
+ * result so the second caller gets the first caller's answer. Permissions
+ * therefore never changed for a window that stayed open.
+ *
+ * This keeps the session exactly as it is and asks the two questions that can
+ * actually have changed since: which role this person holds, and what that role
+ * carries. Cheap enough to call whenever the window comes back to them.
+ */
+export async function refreshAccount(): Promise<AuthUser | null> {
+  if (!currentSession) return null
+
+  await loadProfile(currentSession.user.id)
+  return toAuthUser(currentSession)
+}
+
 /** The signed-in account without touching the network, or `null`. */
 export function currentUser(): AuthUser | null {
   return currentSession ? toAuthUser(currentSession) : null

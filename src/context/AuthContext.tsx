@@ -114,26 +114,47 @@ export function AuthProvider({ children }: { children: ReactNode }): React.JSX.E
   }, [])
 
   /*
-   * Re-read the account whenever the window comes back.
+   * Re-read the account whenever the window comes back to the person.
    *
-   * Permissions are resolved at sign-in and then cached, so somebody moved onto
-   * a different role would go on seeing their old buttons until they signed out
-   * — and be refused by the database when they pressed one, which reads as the
-   * app being broken rather than as a permission having changed.
+   * Permissions are resolved at sign-in and then cached, so somebody whose role
+   * or grants changed goes on seeing their old buttons — and is refused by the
+   * database when they press one, which reads as the app being broken rather
+   * than as a permission having changed. It is worth catching up often.
    *
-   * The window being brought up from the tray is the natural moment to catch
-   * up: it costs one call, at a point where a small delay is invisible.
+   * Two moments, because one was not enough: the window being raised from the
+   * tray, and the window simply being focused again. A window that never went to
+   * the tray never fired the first, so an app left open all afternoon kept a
+   * snapshot from the morning.
+   *
+   * The same call refreshes the main process, which resolves permissions from
+   * the same profile read — so the two halves cannot drift apart.
    */
   useEffect(() => {
-    return window.api.window.onShown(() => {
+    const refresh = (): void => {
       void auth
-        .restoreSession()
+        .refreshAccount()
         .then((current) => setUser(current))
         .catch(() => {
           // A failed refresh says nothing about the session. Keep what we have
           // rather than signing somebody out because the network blinked.
         })
-    })
+    }
+
+    const unsubscribeShown = window.api.window.onShown(refresh)
+    window.addEventListener('focus', refresh)
+
+    /*
+     * And the case neither of those catches: a window left open on a second
+     * monitor, untouched, while somebody's access is changed elsewhere. The
+     * main process notices within the minute and pushes the new answer.
+     */
+    const unsubscribeAccess = window.api.auth.onAccessChanged((account) => setUser(account))
+
+    return () => {
+      unsubscribeShown()
+      unsubscribeAccess()
+      window.removeEventListener('focus', refresh)
+    }
   }, [])
 
   const can = useCallback(

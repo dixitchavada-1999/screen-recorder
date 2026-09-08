@@ -1,6 +1,7 @@
 import { useCallback, useMemo } from 'react'
 import type { AppInfo, AppSettings } from '@shared/types'
 import type { DeepPartial } from '@shared/api'
+import { ShortcutField } from '@/components/ShortcutField'
 import { Button } from '@/components/ui/Button'
 import { Card, Field } from '@/components/ui/Card'
 import { Select, Slider, Toggle, type SelectOption } from '@/components/ui/Controls'
@@ -173,6 +174,17 @@ export function SettingsPage({
           </div>
         </div>
 
+      </Card>
+
+      {/* ----------------------------- Shortcuts ---------------------------- */}
+      <Card
+        title="Shortcuts"
+        description="Keys this app answers to, wherever you are on the machine."
+      >
+        <ShortcutField
+          value={settings.shortcuts.toggleRecording}
+          onChange={(toggleRecording) => onUpdate({ shortcuts: { toggleRecording } })}
+        />
       </Card>
 
       {/* ------------------------------ Storage ----------------------------- */}

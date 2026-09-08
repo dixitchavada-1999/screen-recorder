@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { TaskCard, TaskCardInput, TaskPriority } from '@shared/types'
+import type { TaskCard, TaskCardInput, TaskPerson, TaskPriority } from '@shared/types'
 import { PeoplePicker } from '@/components/PeoplePicker'
 import { Button } from '@/components/ui/Button'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
@@ -34,6 +34,15 @@ interface TaskCardDialogProps {
    * being pressed is worse than one that was never offered.
    */
   canDelete: boolean
+  /**
+   * Who is on the project, and so who this task can be given to.
+   *
+   * Not the whole staff roster: somebody who is not on the project cannot see
+   * it, so assigning them a task on it would hand them work they cannot open.
+   * The database already refuses to show it to them; this stops the window
+   * offering it in the first place.
+   */
+  members: TaskPerson[]
   onClose: () => void
   onCreate: (listId: string, input: TaskCardInput) => Promise<void>
   onSave: (cardId: string, input: TaskCardInput) => Promise<void>
@@ -54,6 +63,7 @@ interface TaskCardDialogProps {
 export function TaskCardDialog({
   target,
   canDelete,
+  members,
   onClose,
   onCreate,
   onSave,
@@ -295,6 +305,7 @@ export function TaskCardDialog({
             placeholder="Search by name"
             emptyLabel="unassigned"
             collapsible
+            people={members}
           />
         )}
       </div>

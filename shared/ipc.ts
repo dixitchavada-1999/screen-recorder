@@ -33,6 +33,8 @@ export const IPC = {
    * any of them happen and should not offer a control that pretends otherwise.
    */
   AUTH_SESSION: 'auth:session',
+  /** Re-reads the role and permissions without touching the session. */
+  AUTH_REFRESH: 'auth:refresh',
   AUTH_SIGN_IN: 'auth:sign-in',
   AUTH_SIGN_OUT: 'auth:sign-out',
   AUTH_SIGN_OUT_ALL: 'auth:sign-out-all',
@@ -167,6 +169,8 @@ export const IPC = {
   EVENT_WINDOW_SHOWN: 'event:window-shown',
   /** The tray asking the window to land somewhere in particular. */
   EVENT_OPEN_SECTION: 'event:open-section',
+  /** Fires when what the signed-in account may do has changed. */
+  EVENT_ACCOUNT_CHANGED: 'event:account-changed',
   /** A session arrived from outside the window, e.g. an email confirmation link. */
   EVENT_AUTH_CHANGED: 'event:auth-changed',
   /** That link could not be completed. */
