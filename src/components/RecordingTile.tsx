@@ -6,6 +6,15 @@ interface RecordingTileProps {
   entry: RecordingEntry
   /** Highlights the tile currently loaded in the player. */
   selected?: boolean
+  /**
+   * Shows the tick box, for screens that delete in batches.
+   *
+   * Off by default, so the recorder's "Recent recordings" strip — where there
+   * is nothing to do in bulk — keeps the plain tile it had.
+   */
+  selectable?: boolean
+  checked?: boolean
+  onCheckedChange?: (checked: boolean) => void
   onPlay: () => void
   onOpenNote: () => void
 }
@@ -19,6 +28,9 @@ interface RecordingTileProps {
 export function RecordingTile({
   entry,
   selected = false,
+  selectable = false,
+  checked = false,
+  onCheckedChange,
   onPlay,
   onOpenNote
 }: RecordingTileProps): React.JSX.Element {
@@ -26,9 +38,11 @@ export function RecordingTile({
     <div
       className={cn(
         'group relative overflow-hidden rounded-xl border transition-colors',
-        selected
-          ? 'border-accent bg-accent/10 ring-1 ring-accent'
-          : 'border-hairline bg-surface hover:border-faint'
+        checked
+          ? 'border-accent bg-accent/15 ring-1 ring-accent'
+          : selected
+            ? 'border-accent bg-accent/10 ring-1 ring-accent'
+            : 'border-hairline bg-surface hover:border-faint'
       )}
     >
       <button type="button" onClick={onPlay} className="block w-full text-left">
@@ -69,7 +83,13 @@ export function RecordingTile({
 
         {/* The file is gone from disk; the entry stays so it can be removed. */}
         {!entry.available && (
-          <span className="absolute left-2 top-2 rounded bg-record/90 px-1.5 py-0.5 text-[10px] font-medium text-white">
+          <span
+            className={cn(
+              'absolute top-2 rounded bg-record/90 px-1.5 py-0.5 text-[10px] font-medium text-white',
+              // Out of the tick box's corner rather than under it.
+              selectable ? 'left-10' : 'left-2'
+            )}
+          >
             File missing
           </span>
         )}
@@ -81,6 +101,39 @@ export function RecordingTile({
           {formatTimestamp(entry.createdAt)}
         </span>
       </button>
+
+      {/*
+        A sibling of the play button, not a child of it.
+
+        Nesting one button inside another is invalid, and the click would reach
+        the outer one on its way up — ticking a tile would start playing it.
+      */}
+      {selectable && (
+        <label
+          className="absolute left-2 top-2 z-10 grid size-6 cursor-pointer place-items-center"
+          title={checked ? 'Deselect this recording' : 'Select this recording'}
+        >
+          <input
+            type="checkbox"
+            checked={checked}
+            onChange={(event) => onCheckedChange?.(event.target.checked)}
+            aria-label={`Select ${entry.fileName}`}
+            className="peer sr-only"
+          />
+          <span
+            className={cn(
+              'grid size-5 place-items-center rounded-md border transition-colors',
+              'peer-focus-visible:ring-2 peer-focus-visible:ring-accent',
+              checked
+                ? 'border-accent bg-accent text-white'
+                : // Legible over a bright poster frame as well as a dark one.
+                  'border-white/70 bg-black/45 text-transparent hover:border-white'
+            )}
+          >
+            <TickIcon />
+          </span>
+        </label>
+      )}
 
       {/*
         Sits where the capture-source tick used to. Hidden until the tile is
@@ -117,6 +170,21 @@ export function TileSkeletonGrid({ count = 6 }: { count?: number }): React.JSX.E
     </div>
   )
 }
+
+const TickIcon = (): React.JSX.Element => (
+  <svg
+    aria-hidden="true"
+    viewBox="0 0 20 20"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className="size-3"
+  >
+    <path d="M4 10.5l4 4 8-9" />
+  </svg>
+)
 
 const PlayIcon = (): React.JSX.Element => (
   <svg aria-hidden="true" viewBox="0 0 20 20" fill="currentColor" className="size-4">

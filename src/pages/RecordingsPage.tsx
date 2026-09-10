@@ -4,6 +4,7 @@ import { NoteDialog } from '@/components/NoteDialog'
 import { FilmIcon, RecordingTile, TileSkeletonGrid } from '@/components/RecordingTile'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { useToast } from '@/context/ToastContext'
 import { useLibrary } from '@/hooks/useLibrary'
 import { toSerializedError, unwrap } from '@/services/ipc'
@@ -24,12 +25,22 @@ interface RecordingsPageProps {
 export function RecordingsPage({
   initialRecordingId = null
 }: RecordingsPageProps): React.JSX.Element {
-  const { recordings, loading, error, busyId, refresh, remove, forget, exportFile } = useLibrary()
+  const { recordings, loading, error, busyId, refresh, remove, removeMany, forget, exportFile } =
+    useLibrary()
   const { push } = useToast()
 
   const [selectedId, setSelectedId] = useState<string | null>(initialRecordingId)
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
   const [noteId, setNoteId] = useState<string | null>(null)
+
+  /*
+   * The recordings ticked for deleting, which is a different thing from the one
+   * loaded in the player above. Both are called "selected" in the UI and they
+   * have to stay apart in the code, so this one is `chosen`.
+   */
+  const [chosen, setChosen] = useState<ReadonlySet<string>>(() => new Set())
+  const [confirmBulk, setConfirmBulk] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   // Follow the caller's choice when navigating in from another page.
   useEffect(() => {
@@ -47,10 +58,36 @@ export function RecordingsPage({
     }
   }, [recordings, selectedId])
 
+  /*
+   * A tick on something that is no longer there.
+   *
+   * The list changes underneath this — a delete from the player above, a new
+   * recording, a Refresh that finds a file gone. Left alone, a stale id would
+   * sit in the count and make the bar promise more than it can deliver.
+   */
+  useEffect(() => {
+    setChosen((current) => {
+      if (current.size === 0) return current
+      const next = new Set([...current].filter((id) => recordings.some((r) => r.id === id)))
+      return next.size === current.size ? current : next
+    })
+  }, [recordings])
+
   const selected = useMemo(
     () => recordings.find((item) => item.id === selectedId) ?? null,
     [recordings, selectedId]
   )
+
+  const toggleChosen = (id: string, ticked: boolean): void => {
+    setChosen((current) => {
+      const next = new Set(current)
+      if (ticked) next.add(id)
+      else next.delete(id)
+      return next
+    })
+  }
+
+  const allChosen = recordings.length > 0 && chosen.size === recordings.length
 
   const totalBytes = useMemo(
     () => recordings.reduce((sum, item) => sum + item.sizeBytes, 0),
@@ -89,6 +126,37 @@ export function RecordingsPage({
         title: 'Could not delete',
         description: toSerializedError(caught).message
       })
+    }
+  }
+
+  const handleDeleteChosen = async (): Promise<void> => {
+    const ids = [...chosen]
+
+    setDeleting(true)
+    try {
+      const { deleted, failed } = await removeMany(ids)
+
+      setConfirmBulk(false)
+      setChosen(new Set())
+
+      if (deleted > 0) {
+        push({
+          tone: 'info',
+          title: `${deleted} recording${deleted === 1 ? '' : 's'} deleted`,
+          ...(failed > 0 ? { description: `${failed} could not be deleted.` } : {})
+        })
+      }
+
+      // Nothing went. Saying "0 deleted" in an info toast would read as success.
+      if (deleted === 0 && failed > 0) {
+        push({
+          tone: 'error',
+          title: 'Nothing could be deleted',
+          description: 'The files may be open in another application.'
+        })
+      }
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -257,19 +325,75 @@ export function RecordingsPage({
             description="Head to the Recorder tab and press Start Recording."
           />
         ) : (
-          <div className="grid max-h-[26rem] grid-cols-2 gap-3 overflow-y-auto pr-1 lg:grid-cols-3 xl:grid-cols-4">
-            {recordings.map((entry) => (
-              <RecordingTile
-                key={entry.id}
-                entry={entry}
-                selected={entry.id === selectedId}
-                onPlay={() => setSelectedId(entry.id)}
-                onOpenNote={() => setNoteId(entry.id)}
-              />
-            ))}
-          </div>
+          <>
+            {/*
+              Only once something is ticked.
+
+              A bar that is always there spends a row of the card on buttons
+              that do nothing yet, and the tick boxes already say the feature
+              exists. Select all lives here rather than in the header so the
+              whole of it appears and disappears as one thing.
+            */}
+            {chosen.size > 0 && (
+              <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-accent/40 bg-accent/10 px-3 py-2">
+                <span className="text-xs font-medium text-accent-strong">
+                  {chosen.size} selected
+                </span>
+
+                <span className="flex-1" />
+
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() =>
+                    setChosen(allChosen ? new Set() : new Set(recordings.map((item) => item.id)))
+                  }
+                >
+                  {allChosen ? 'Select none' : 'Select all'}
+                </Button>
+
+                <Button size="sm" variant="ghost" onClick={() => setChosen(new Set())}>
+                  Clear
+                </Button>
+
+                <Button
+                  size="sm"
+                  variant="danger"
+                  loading={deleting}
+                  onClick={() => setConfirmBulk(true)}
+                >
+                  Delete
+                </Button>
+              </div>
+            )}
+
+            <div className="grid max-h-[26rem] grid-cols-2 gap-3 overflow-y-auto pr-1 lg:grid-cols-3 xl:grid-cols-4">
+              {recordings.map((entry) => (
+                <RecordingTile
+                  key={entry.id}
+                  entry={entry}
+                  selected={entry.id === selectedId}
+                  selectable
+                  checked={chosen.has(entry.id)}
+                  onCheckedChange={(ticked) => toggleChosen(entry.id, ticked)}
+                  onPlay={() => setSelectedId(entry.id)}
+                  onOpenNote={() => setNoteId(entry.id)}
+                />
+              ))}
+            </div>
+          </>
         )}
       </Card>
+
+      <ConfirmDialog
+        open={confirmBulk}
+        title={`Delete ${chosen.size} recording${chosen.size === 1 ? '' : 's'}?`}
+        description="They go to the recycle bin, along with their thumbnails and notes. Recordings whose file is already missing are dropped from the list."
+        confirmLabel={`Delete ${chosen.size}`}
+        busy={deleting}
+        onConfirm={() => void handleDeleteChosen()}
+        onClose={() => setConfirmBulk(false)}
+      />
 
       <NoteDialog
         open={noteId !== null}

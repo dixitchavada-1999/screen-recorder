@@ -10,6 +10,13 @@ interface UseLibraryResult {
   busyId: string | null
   refresh: () => Promise<void>
   remove: (id: string) => Promise<void>
+  /**
+   * Deletes several at once. Returns how many went, so the caller can say so.
+   *
+   * Never rejects: one recording refusing is not a reason to abandon the rest,
+   * and the count is what the sentence afterwards is built from.
+   */
+  removeMany: (ids: readonly string[]) => Promise<{ deleted: number; failed: number }>
   /** Drops a missing recording from the list without touching the disk. */
   forget: (id: string) => Promise<void>
   /** Returns the chosen destination, or null when the dialog was cancelled. */
@@ -50,6 +57,40 @@ export function useLibrary(): UseLibraryResult {
     }
   }, [])
 
+  /*
+   * One at a time, deliberately.
+   *
+   * Every delete rewrites the catalogue file, and firing them together would
+   * have the writes land on top of each other — the last one wins and the rest
+   * of the deletions come back on the next refresh. Ten files is a moment's
+   * work in sequence; correctness is worth more than the wait.
+   *
+   * Missing files need no special case: `deleteRecording` falls through to
+   * dropping the entry when there is nothing on disk to bin.
+   */
+  const removeMany = useCallback(async (ids: readonly string[]) => {
+    let deleted = 0
+    let failed = 0
+    const gone: string[] = []
+
+    for (const id of ids) {
+      setBusyId(id)
+      try {
+        await unwrap(window.api.library.remove(id))
+        gone.push(id)
+        deleted += 1
+      } catch {
+        failed += 1
+      }
+    }
+
+    setBusyId(null)
+    // One state write at the end, rather than a re-render per file.
+    if (gone.length > 0) setRecordings((current) => current.filter((item) => !gone.includes(item.id)))
+
+    return { deleted, failed }
+  }, [])
+
   const forget = useCallback(async (id: string) => {
     setBusyId(id)
     try {
@@ -69,5 +110,5 @@ export function useLibrary(): UseLibraryResult {
     }
   }, [])
 
-  return { recordings, loading, error, busyId, refresh, remove, forget, exportFile }
+  return { recordings, loading, error, busyId, refresh, remove, removeMany, forget, exportFile }
 }
