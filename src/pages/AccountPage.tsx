@@ -86,25 +86,44 @@ export function AccountPage({
   const [section, setSection] = useState<Section>('dashboard')
   const [signingOut, setSigningOut] = useState(false)
 
-  // The caller unmounts this page when the session ends; this covers the frame
-  // between the two.
-  if (!user) return null
+  const visibleSections = SECTIONS.filter((item) => !item.permission || can(item.permission))
 
   /*
    * Honoured only if the screen is one this account is actually offered — a
-   * request from outside is a request, not an override, and the menu is already
-   * filtered by what this person may see.
+   * request from outside is a request, not an override.
+   *
+   * Asked of the filtered list and not the whole one. Against `SECTIONS` this
+   * accepted any name it recognised, and the screen then rendered nothing: the
+   * body checks the permission a second time, so somebody without `calendar.view`
+   * who used the tray's "Open Calendar" landed on an empty panel with no item
+   * lit in the menu.
    */
   useEffect(() => {
     if (!sectionRequest) return
-    const wanted = SECTIONS.find((item) => item.id === sectionRequest.section)
+    const wanted = visibleSections.find((item) => item.id === sectionRequest.section)
     if (wanted) setSection(wanted.id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sectionRequest])
 
-  const visibleSections = SECTIONS.filter(
-    (item) =>
-      !item.permission || can(item.permission)
-  )
+  /*
+   * A screen that stops being allowed while it is open.
+   *
+   * Permissions can now change under a running window — `account-watch` sees an
+   * edit within the minute and the menu redraws without the item. The body would
+   * simply render nothing, leaving a blank panel that reads as the app breaking
+   * rather than as access having changed. Falls back to the Dashboard, which
+   * needs no permission.
+   */
+  const sectionAllowed = visibleSections.some((item) => item.id === section)
+
+  useEffect(() => {
+    if (!sectionAllowed) setSection('dashboard')
+  }, [sectionAllowed])
+
+  // The caller unmounts this page when the session ends; this covers the frame
+  // between the two. After the hooks, so the count does not change on the way
+  // out — a conditional return above them is what React counts as fewer hooks.
+  if (!user) return null
 
   const handleSignOut = async (): Promise<void> => {
     setSigningOut(true)
