@@ -15,6 +15,8 @@ import { spawn } from 'node:child_process'
 import type { RecordingEntry } from '@shared/types'
 import { AppError, ERROR_CODES } from '../lib/errors'
 import { logger } from '../lib/logger'
+import { deleteTranscript } from './transcript-store'
+import { deleteVoiceTrack } from './voice-track'
 import { resolveFfmpegPath } from './ffmpeg-locator'
 import {
   findEntry,
@@ -450,6 +452,8 @@ export async function deleteRecording(id: string): Promise<void> {
 
   // Derived data goes with the video, in both the old and the new location.
   await fsp.unlink(thumbnailPathFor(id)).catch(() => undefined)
+  await deleteVoiceTrack(id)
+  await deleteTranscript(id)
   await fsp
     .unlink(entry.path.replace(/\.mp4$/i, LEGACY_THUMBNAIL_SUFFIX))
     .catch(() => undefined)
@@ -469,6 +473,8 @@ export async function deleteRecording(id: string): Promise<void> {
 export async function forgetRecording(id: string): Promise<void> {
   removeEntry(id)
   await fsp.unlink(thumbnailPathFor(id)).catch(() => undefined)
+  await deleteVoiceTrack(id)
+  await deleteTranscript(id)
   logger.info(SCOPE, 'Recording removed from the list', { id })
 }
 

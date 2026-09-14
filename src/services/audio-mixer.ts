@@ -23,10 +23,25 @@ export interface MixerGains {
  * Web Audio is used rather than simply adding two tracks to the MediaStream
  * because MediaRecorder encodes only the first audio track it is given —
  * a second track would be silently dropped.
+ *
+ * A second output is built alongside it for transcription: the same two inputs,
+ * but hard-panned — the microphone fully left, system audio fully right. Once
+ * they are mixed there is no getting them apart again, and knowing which side
+ * of a conversation said what is most of what makes a transcript useful. Kept
+ * apart at the point where they are still separate, a later `channelsplit`
+ * recovers each speaker exactly, with no acoustic guesswork.
+ *
+ * The recording itself is untouched by this — it still gets the mixed track, so
+ * what somebody hears on playback is unchanged.
  */
 export class AudioMixer {
   private context: AudioContext | null = null
   private destination: MediaStreamAudioDestinationNode | null = null
+
+  /** The hard-panned copy, for transcription. Never reaches the recording. */
+  private voiceDestination: MediaStreamAudioDestinationNode | null = null
+  private micPanner: StereoPannerNode | null = null
+  private systemPanner: StereoPannerNode | null = null
 
   private micGain: GainNode | null = null
   private systemGain: GainNode | null = null
@@ -45,6 +60,23 @@ export class AudioMixer {
   }
 
   /**
+   * The hard-panned track, or null when there is no audio at all.
+   *
+   * Stereo by construction even with one input connected: the empty side stays
+   * silent, and a silent channel costs a transcription pass that finds nothing
+   * rather than producing something wrong.
+   */
+  get voiceTrack(): MediaStreamTrack | null {
+    const [track] = this.voiceDestination?.stream.getAudioTracks() ?? []
+    return track ?? null
+  }
+
+  /** Which sides of the conversation the panned track actually carries. */
+  get voiceChannels(): { left: boolean; right: boolean } {
+    return { left: this.micGain !== null, right: this.systemGain !== null }
+  }
+
+  /**
    * Builds the graph and returns the mixed track, or `null` when no input was
    * supplied (a silent recording is valid).
    */
@@ -54,6 +86,13 @@ export class AudioMixer {
     const context = new AudioContext({ sampleRate: SAMPLE_RATE, latencyHint: 'playback' })
     this.context = context
     this.destination = context.createMediaStreamDestination()
+
+    // Two channels explicitly: the whole point of this output is that the sides
+    // stay apart, and a destination that decided it was mono would undo it.
+    this.voiceDestination = context.createMediaStreamDestination()
+    this.voiceDestination.channelCount = 2
+    this.voiceDestination.channelCountMode = 'explicit'
+    this.voiceDestination.channelInterpretation = 'speakers'
 
     if (inputs.microphone) {
       const built = this.attach(inputs.microphone, gains.microphone, 'microphone')
@@ -84,7 +123,7 @@ export class AudioMixer {
   private attach(
     stream: MediaStream,
     gainValue: number,
-    label: string
+    label: 'microphone' | 'systemAudio'
   ): { gain: GainNode; analyser: AnalyserNode } {
     const context = this.context
     const destination = this.destination
@@ -103,6 +142,28 @@ export class AudioMixer {
     source.connect(gain)
     gain.connect(analyser)
     gain.connect(destination)
+
+    /*
+     * The panned copy hangs off the gain node too, not off the source.
+     *
+     * Two reasons. A hot-swapped device reconnects `source -> gain`, so
+     * everything downstream of the gain survives it untouched — tapping the
+     * source would mean rebuilding this on every swap. And it keeps the
+     * transcript honest: turn an input down and it fades from both, so the
+     * transcript can never contain words that are inaudible in the recording.
+     */
+    if (this.voiceDestination) {
+      const panner = context.createStereoPanner()
+      // Fully to one side. Anything less leaves each voice audible in both
+      // channels, and a split that leaks is worse than no split at all.
+      panner.pan.value = label === 'microphone' ? -1 : 1
+
+      gain.connect(panner)
+      panner.connect(this.voiceDestination)
+
+      if (label === 'microphone') this.micPanner = panner
+      else this.systemPanner = panner
+    }
 
     this.sourceNodes.push(source)
     if (label === 'microphone') this.micSource = source
@@ -217,15 +278,24 @@ export class AudioMixer {
     this.systemGain?.disconnect()
     this.micAnalyser?.disconnect()
     this.systemAnalyser?.disconnect()
+    this.micPanner?.disconnect()
+    this.systemPanner?.disconnect()
 
     this.micGain = null
     this.systemGain = null
     this.micAnalyser = null
     this.systemAnalyser = null
+    this.micPanner = null
+    this.systemPanner = null
 
     if (this.destination) {
       for (const track of this.destination.stream.getTracks()) track.stop()
       this.destination = null
+    }
+
+    if (this.voiceDestination) {
+      for (const track of this.voiceDestination.stream.getTracks()) track.stop()
+      this.voiceDestination = null
     }
 
     if (this.context && this.context.state !== 'closed') {

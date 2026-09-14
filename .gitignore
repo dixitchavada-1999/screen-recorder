@@ -15,6 +15,10 @@ recordings/*
 ffmpeg/*
 !ffmpeg/README.md
 
+# Fetched by scripts/fetch-whisper.mjs, not committed — see whisper/README.md
+whisper/*
+!whisper/README.md
+
 # Logs and caches
 *.log
 .vite/

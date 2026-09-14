@@ -474,6 +474,11 @@ export interface ShortcutSettings {
   toggleRecording: string
 }
 
+/** How a recording's speech is read back as text. */
+export interface TranscriptSettings {
+  model: WhisperModelKey
+}
+
 export interface AppSettings {
   video: VideoSettings
   audio: AudioSettings
@@ -481,6 +486,7 @@ export interface AppSettings {
   notifications: NotificationSettings
   startup: StartupSettings
   shortcuts: ShortcutSettings
+  transcript: TranscriptSettings
   tracking: TrackingSettings
   experimental: ExperimentalSettings
   /** Schema version, used to migrate persisted settings between releases. */
@@ -798,6 +804,14 @@ export interface FinalizeResult {
   encoder: string
   /** True when a hardware encoder was requested but FFmpeg fell back to CPU. */
   usedFallbackEncoder: boolean
+  /**
+   * Whether a hard-panned audio copy was kept beside this recording.
+   *
+   * False for a silent capture, and for one whose voice track could not be
+   * written — in both cases there is nothing to transcribe, and the UI should
+   * say so rather than offer a button that cannot work.
+   */
+  hasVoiceTrack: boolean
 }
 
 export type ProcessingStage = 'queued' | 'encoding' | 'finalizing' | 'done' | 'failed'
@@ -1012,4 +1026,75 @@ export interface SerializedError {
   message: string
   /** Optional operator-facing hint, e.g. how to install a missing dependency. */
   hint?: string
+}
+
+/* -------------------------------------------------------------------------- */
+/*                                 Transcripts                                */
+/* -------------------------------------------------------------------------- */
+
+/** The speech models offered for transcription, smallest first. */
+export type WhisperModelKey = 'base' | 'small' | 'medium'
+
+export interface WhisperModelStatus {
+  key: WhisperModelKey
+  label: string
+  /** What choosing it costs and buys, in a sentence. */
+  note: string
+  /** Roughly what it weighs, for the prompt before downloading it. */
+  approxMb: number
+  installed: boolean
+  /** Actual size on disk, or 0 when it has not been downloaded. */
+  sizeBytes: number
+}
+
+/**
+ * Which side of the conversation a line came from.
+ *
+ * `me` and `them` are only knowable when the two were recorded on separate
+ * channels — this app's own captures, and the occasional imported file from a
+ * call recorder that does the same. Everything else arrives already mixed, and
+ * `unknown` says so rather than guessing.
+ */
+export type TranscriptSpeaker = 'me' | 'them' | 'unknown'
+
+export interface TranscriptSegment {
+  speaker: TranscriptSpeaker
+  /** Milliseconds from the start of the recording — the video's own clock. */
+  startMs: number
+  endMs: number
+  text: string
+}
+
+export type TranscriptStage =
+  | 'queued'
+  | 'downloading-model'
+  | 'splitting'
+  | 'transcribing'
+  | 'done'
+  | 'failed'
+
+export interface TranscriptProgress {
+  /** The recording's catalogue id, or the id a transcribed file is filed under. */
+  id: string
+  stage: TranscriptStage
+  /** 0-100, or null while the work has no measurable length. */
+  percent: number | null
+  detail: string
+}
+
+export interface Transcript {
+  id: string
+  /**
+   * The file this came from, when it did not come from a recording.
+   *
+   * Empty for the app's own captures, which are named by the library instead.
+   */
+  sourceName: string
+  model: WhisperModelKey
+  /** What Whisper heard, before translating. Empty when it could not tell. */
+  detectedLanguage: string
+  createdAt: number
+  /** How long the transcription itself took, for the "worth it?" question. */
+  tookMs: number
+  segments: TranscriptSegment[]
 }

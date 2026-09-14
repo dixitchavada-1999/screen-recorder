@@ -73,6 +73,22 @@ class RecordingController {
   private systemStream: MediaStream | null = null
   private combinedStream: MediaStream | null = null
 
+  /*
+   * A second recorder on the mixer's hard-panned output, for transcribing.
+   *
+   * Runs in lockstep with the first — started, paused, resumed and stopped
+   * together — because a transcript's timestamps are only useful if they point
+   * at the right moment of the video. Let one pause without the other and every
+   * line after the first pause is wrong.
+   *
+   * Nothing here may fail the recording. Audio-only Opus is around half a
+   * megabyte a minute against the video's forty-four, and losing it costs a
+   * transcript, not a capture.
+   */
+  private voiceRecorder: MediaRecorder | null = null
+  private voiceStream: MediaStream | null = null
+  private voiceWriteChain: Promise<void> = Promise.resolve()
+
   /* Session bookkeeping. */
   private sessionId: string | null = null
   private startedAt = 0
@@ -233,8 +249,9 @@ class RecordingController {
       )
       this.hasAudioTrack = mixedTrack !== null
 
-      // 6. Start the recorder.
+      // 6. Start the recorder, and its quiet companion.
       this.startMediaRecorder(settings)
+      this.startVoiceRecorder()
 
       this.startedAt = Date.now()
       this.startTicker()
@@ -370,6 +387,68 @@ class RecordingController {
     recorder.start(CHUNK_INTERVAL_MS)
   }
 
+  /**
+   * Records the mixer's hard-panned output to its own audio-only file.
+   *
+   * Never throws and never sets `writeError`: every failure here ends with a
+   * log line and no voice track, which the UI reads as "this one cannot be
+   * transcribed" rather than as a broken recording.
+   */
+  private startVoiceRecorder(): void {
+    const track = this.mixer?.voiceTrack
+    if (!track) return
+
+    try {
+      const stream = new MediaStream([track])
+      this.voiceStream = stream
+
+      // Opus by name where it is offered; the browser's own default otherwise.
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : ''
+
+      const recorder = new MediaRecorder(stream, {
+        ...(mimeType ? { mimeType } : {}),
+        // Speech, and two channels of it. Enough for transcription and far
+        // below the video's own audio, which is what people actually listen to.
+        audioBitsPerSecond: 64_000
+      })
+
+      recorder.ondataavailable = (event: BlobEvent) => {
+        if (event.data && event.data.size > 0) this.enqueueVoiceChunk(event.data)
+      }
+
+      recorder.onerror = (event: Event) => {
+        const error = (event as unknown as { error?: DOMException }).error
+        log.warn(SCOPE, 'Voice recorder stopped, continuing without a voice track', error)
+        this.voiceRecorder = null
+      }
+
+      recorder.start(CHUNK_INTERVAL_MS)
+      this.voiceRecorder = recorder
+
+      log.info(SCOPE, 'Voice track recording', this.mixer?.voiceChannels ?? {})
+    } catch (error) {
+      log.warn(SCOPE, 'Voice track could not be started', error)
+      this.voiceRecorder = null
+    }
+  }
+
+  /** Same shape as `enqueueChunk`, but a failure is dropped rather than kept. */
+  private enqueueVoiceChunk(blob: Blob): void {
+    const sessionId = this.sessionId
+    if (!sessionId) return
+
+    this.voiceWriteChain = this.voiceWriteChain
+      .then(async () => {
+        const buffer = await blob.arrayBuffer()
+        await unwrap(window.api.recording.writeVoiceChunk(sessionId, buffer))
+      })
+      .catch((error: unknown) => {
+        log.warn(SCOPE, 'Failed to write a voice chunk', error)
+      })
+  }
+
   /** Appends a chunk, preserving order and surfacing the first write failure. */
   private enqueueChunk(blob: Blob): void {
     const sessionId = this.sessionId
@@ -395,6 +474,8 @@ class RecordingController {
     if (this.snapshot.state !== 'recording' || !this.recorder) return
 
     this.recorder.pause()
+    // Together, or the transcript's timestamps stop matching the video.
+    if (this.voiceRecorder?.state === 'recording') this.voiceRecorder.pause()
     this.pausedAt = Date.now()
     this.patch({ state: 'paused' })
     log.info(SCOPE, 'Recording paused')
@@ -408,6 +489,7 @@ class RecordingController {
       this.pausedAt = null
     }
     this.recorder.resume()
+    if (this.voiceRecorder?.state === 'paused') this.voiceRecorder.resume()
     this.patch({ state: 'recording' })
     log.info(SCOPE, 'Recording resumed')
   }
@@ -427,9 +509,10 @@ class RecordingController {
     const sessionId = this.sessionId
 
     try {
-      await this.stopMediaRecorder()
+      await Promise.all([this.stopMediaRecorder(), this.stopVoiceRecorder()])
       // Wait for every queued chunk to reach disk before closing the file.
       await this.writeChain
+      await this.voiceWriteChain
       await this.releaseMedia()
 
       if (!sessionId) throw new Error('Recording session was lost')
@@ -487,8 +570,9 @@ class RecordingController {
     const sessionId = this.sessionId
 
     try {
-      await this.stopMediaRecorder()
+      await Promise.all([this.stopMediaRecorder(), this.stopVoiceRecorder()])
       await this.writeChain
+      await this.voiceWriteChain
     } catch (error) {
       log.warn(SCOPE, 'Error while cancelling', error)
     }
@@ -502,6 +586,26 @@ class RecordingController {
     this.resetSessionState()
     this.patch({ state: 'idle', sessionId: null, elapsedMs: 0, bytesWritten: 0, progress: null })
     log.info(SCOPE, 'Recording cancelled')
+  }
+
+  /** Mirrors `stopMediaRecorder`, but a stall here is never worth waiting on. */
+  private stopVoiceRecorder(): Promise<void> {
+    const recorder = this.voiceRecorder
+    this.voiceRecorder = null
+    if (!recorder || recorder.state === 'inactive') return Promise.resolve()
+
+    return new Promise<void>((resolve) => {
+      recorder.onstop = () => resolve()
+
+      try {
+        recorder.stop()
+      } catch (error) {
+        log.warn(SCOPE, 'Voice recorder stop threw', error)
+        resolve()
+      }
+
+      setTimeout(resolve, 5000)
+    })
   }
 
   private stopMediaRecorder(): Promise<void> {
@@ -693,6 +797,8 @@ class RecordingController {
     stopStream(this.videoStream)
     stopStream(this.micStream)
     stopStream(this.systemStream)
+    stopStream(this.voiceStream)
+    this.voiceStream = null
     stopStream(this.combinedStream)
 
     this.videoStream = null
@@ -730,6 +836,7 @@ class RecordingController {
     this.hasAudioTrack = false
     this.mimeType = ''
     this.writeChain = Promise.resolve()
+    this.voiceWriteChain = Promise.resolve()
     this.writeError = null
   }
 }

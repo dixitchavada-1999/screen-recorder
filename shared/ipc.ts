@@ -127,6 +127,15 @@ export const IPC = {
 
   RECORDING_BEGIN: 'recording:begin',
   RECORDING_WRITE_CHUNK: 'recording:write-chunk',
+  RECORDING_WRITE_VOICE_CHUNK: 'recording:write-voice-chunk',
+
+  TRANSCRIPT_GET: 'transcript:get',
+  TRANSCRIPT_START: 'transcript:start',
+  TRANSCRIPT_CANCEL: 'transcript:cancel',
+  TRANSCRIPT_DELETE: 'transcript:delete',
+  TRANSCRIPT_MODELS: 'transcript:models',
+  TRANSCRIPT_AVAILABLE: 'transcript:available',
+  TRANSCRIPT_PICK_FILE: 'transcript:pick-file',
   RECORDING_FINALIZE: 'recording:finalize',
   RECORDING_ABORT: 'recording:abort',
 
@@ -161,6 +170,7 @@ export const IPC = {
 
   /* send — main → renderer (one-way events) */
   EVENT_PROCESSING_PROGRESS: 'event:processing-progress',
+  EVENT_TRANSCRIPT_PROGRESS: 'event:transcript-progress',
   EVENT_SETTINGS_CHANGED: 'event:settings-changed',
   EVENT_REQUEST_STOP: 'event:request-stop',
   /** A transport command issued from the tray menu. */

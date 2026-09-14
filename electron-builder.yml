@@ -38,6 +38,14 @@ extraResources:
     to: ffmpeg
     filter:
       - '**/*'
+  # whisper.cpp, fetched by `scripts/fetch-whisper.mjs` before a packaged build.
+  # Unlike ffmpeg there is no npm package behind it, so an empty folder here
+  # means an app that cannot transcribe — the README says as much.
+  - from: whisper
+    to: whisper
+    filter:
+      - '**/*'
+      - '!README.md'
   # The tray loads these at runtime, so they must ship inside resources/ rather
   # than staying build-time-only assets. `trayTemplate*` is the macOS menu-bar
   # glyph; nativeImage resolves the @2x file itself, so both have to be there.
@@ -52,7 +60,10 @@ extraResources:
 # Windows
 # ---------------------------------------------------------------------------
 win:
-  icon: build/icon.png
+  # The `.ico` rather than the PNG, so electron-builder skips its WebAssembly
+  # converter — a step that needs a large allocation up front and fails the
+  # whole build on a machine that is short of memory. `npm run icon` writes it.
+  icon: build/icon.ico
   # Installer only. A portable build cannot update itself — the updater refuses
   # to overwrite a file somebody placed by hand — and building both made
   # electron-builder open two GitHub releases at once, splitting the assets

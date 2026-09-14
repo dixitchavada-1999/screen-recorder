@@ -1,6 +1,6 @@
 {
   "name": "screen-recorder",
-  "version": "1.2.11",
+  "version": "1.2.12",
   "description": "Lightweight OBS-like cross-platform screen recorder built with Electron, React, TypeScript and FFmpeg",
   "author": {
     "name": "Screen Recorder",
@@ -20,10 +20,10 @@
     "icon": "node scripts/generate-icon.mjs",
     "build": "npm run typecheck && electron-vite build",
     "prepack:dir": "npm run icon",
-    "prebuild:win": "npm run icon",
+    "prebuild:win": "npm run icon && node scripts/fetch-whisper.mjs",
     "prebuild:mac": "npm run icon",
     "prebuild:linux": "npm run icon",
-    "prebuild:all": "npm run icon",
+    "prebuild:all": "npm run icon && node scripts/fetch-whisper.mjs",
     "pack:dir": "npm run build && electron-builder --dir",
     "build:win": "npm run build && electron-builder --win --publish never",
     "build:mac": "npm run build && electron-builder --mac --publish never",

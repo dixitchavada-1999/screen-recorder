@@ -163,6 +163,17 @@ export const DEFAULT_SETTINGS: AppSettings = {
     // Off by default: the app lives in the tray and keeps no taskbar button.
     showInTaskbar: false
   },
+  transcript: {
+    /*
+     * Whichever model is chosen, the transcript comes out in English.
+     *
+     * Recordings here are in whatever language the people on them speak, and
+     * the transcript is read by people who want one language. Whisper does the
+     * translation itself as part of reading the audio — see `transcribe.ts` —
+     * so there is nothing to configure and no second pass.
+     */
+    model: 'small'
+  },
   shortcuts: {
     /*
      * Works with the window closed and somebody else's application in front —

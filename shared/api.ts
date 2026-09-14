@@ -1,7 +1,7 @@
 import type {
   ActivityDay,
-  AppRole,
   AppInfo,
+  AppRole,
   AppSettings,
   AuthUser,
   CallReminder,
@@ -27,6 +27,8 @@ import type {
   ScheduledCallRange,
   ScheduledCallStatus,
   SerializedError,
+  SessionHandle,
+  SignInInput,
   TaskBoard,
   TaskBoardDetail,
   TaskCard,
@@ -37,12 +39,14 @@ import type {
   TaskNote,
   TaskPerson,
   TrackedPerson,
-  UserPermission,
   TrackingPolicy,
-  SessionHandle,
-  SignInInput,
+  Transcript,
+  TranscriptProgress,
   TrayCommand,
-  UpdateStatus
+  UpdateStatus,
+  UserPermission,
+  WhisperModelKey,
+  WhisperModelStatus
 } from './types'
 
 /** Recursively optional — used for settings patches. */
@@ -372,11 +376,42 @@ export interface RecorderApi {
     begin(): Promise<IpcResult<SessionHandle>>
     /** Appends one MediaRecorder chunk to the session's file. */
     writeChunk(sessionId: string, chunk: ArrayBuffer): Promise<IpcResult<void>>
+    /**
+     * A chunk of the hard-panned audio copy, for transcribing later.
+     *
+     * Separate from `writeChunk` because it is allowed to fail quietly — the
+     * recording does not depend on it.
+     */
+    writeVoiceChunk(sessionId: string, chunk: ArrayBuffer): Promise<IpcResult<void>>
     /** Closes the stream and runs the FFmpeg pipeline. */
     finalize(request: FinalizeRequest): Promise<IpcResult<FinalizeResult>>
     /** Discards a session and removes its intermediate file. */
     abort(sessionId: string): Promise<IpcResult<void>>
     onProgress(listener: (progress: ProcessingProgress) => void): Unsubscribe
+  }
+
+  /** Turning a recording's voice track into text, on this machine. */
+  transcript: {
+    /** The stored transcript, or null when it has not been made yet. */
+    get(recordingId: string): Promise<IpcResult<Transcript | null>>
+    /** Runs the job and stores the result. Resolves when it is finished. */
+    start(recordingId: string, model?: WhisperModelKey): Promise<IpcResult<Transcript>>
+    cancel(recordingId: string): Promise<IpcResult<void>>
+    remove(recordingId: string): Promise<IpcResult<void>>
+    models(): Promise<IpcResult<WhisperModelStatus[]>>
+    /**
+     * Picks a media file and transcribes it, or returns null if dismissed.
+     *
+     * Resolves with the stored transcript when this exact file has been read
+     * before, so choosing it again is instant rather than another twenty
+     * minutes of the same work.
+     */
+    pickFile(): Promise<IpcResult<Transcript | null>>
+    /** Everything the panel needs before it can offer a button. */
+    availability(recordingId: string): Promise<
+      IpcResult<{ engineReady: boolean; hasAudio: boolean; running: boolean; busy: boolean }>
+    >
+    onProgress(listener: (progress: TranscriptProgress) => void): Unsubscribe
   }
 
   recovery: {

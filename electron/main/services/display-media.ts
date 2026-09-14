@@ -40,8 +40,20 @@ export function configureMediaAccess(): void {
    * `fullscreen` is required for the video player's own fullscreen button —
    * without it Chromium's `requestFullscreen()` promise never settles and the
    * control silently does nothing.
+   *
+   * `clipboard-sanitized-write` is what `navigator.clipboard.writeText` asks
+   * for. Denying it made every Copy button in the app fail without saying
+   * anything — the promise rejects, and a rejected clipboard write looks
+   * exactly like a button that does nothing. It only permits this window to put
+   * its own text on the clipboard; reading what is already there is a separate
+   * permission and stays refused.
    */
-  const ALLOWED_PERMISSIONS = new Set(['media', 'display-capture', 'fullscreen'])
+  const ALLOWED_PERMISSIONS = new Set([
+    'media',
+    'display-capture',
+    'fullscreen',
+    'clipboard-sanitized-write'
+  ])
 
   defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
     const allowed = ALLOWED_PERMISSIONS.has(permission)
@@ -54,7 +66,11 @@ export function configureMediaAccess(): void {
   // Synchronous permission checks use a narrower permission union than the
   // request handler above; screen capture surfaces here as 'media'.
   defaultSession.setPermissionCheckHandler((_webContents, permission) => {
-    return permission === 'media' || permission === 'fullscreen'
+    return (
+      permission === 'media' ||
+      permission === 'fullscreen' ||
+      permission === 'clipboard-sanitized-write'
+    )
   })
 
   defaultSession.setDisplayMediaRequestHandler(

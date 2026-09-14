@@ -24,6 +24,7 @@ import { AppError, ERROR_CODES } from '../lib/errors'
 import { logger } from '../lib/logger'
 import { libraryDirectory, registerRecording } from './library'
 import { settingsStore } from './settings-store'
+import { VOICE_TEMP_SUFFIX, adoptVoiceTrack } from './voice-track'
 import { transcodeToMp4 } from './transcoder'
 
 const SCOPE = 'recording-session'
@@ -44,6 +45,20 @@ interface ActiveSession {
   startedAt: number
   /** Resolves once the stream has flushed and closed. */
   closing: Promise<void> | null
+
+  /*
+   * The hard-panned audio copy, opened only if the renderer actually sends any.
+   *
+   * A second, much smaller stream running alongside the first. It is opened
+   * lazily so a capture with no audio never leaves an empty file behind for the
+   * orphan scan to find.
+   */
+  voicePath: string
+  voiceStream: WriteStream | null
+  voiceBytes: number
+  voiceClosing: Promise<void> | null
+  /** Set once the voice stream has failed; writes stop, the capture does not. */
+  voiceFailed: boolean
 }
 
 const sessions = new Map<string, ActiveSession>()
@@ -94,6 +109,11 @@ function intermediatePath(sessionId: string): string {
   return join(tempDirectory(), `${INTERMEDIATE_PREFIX}${sessionId}${INTERMEDIATE_EXT}`)
 }
 
+/** The voice scratch file for a session, beside its video counterpart. */
+function voiceTempPath(sessionId: string): string {
+  return join(tempDirectory(), `${INTERMEDIATE_PREFIX}${sessionId}${VOICE_TEMP_SUFFIX}`)
+}
+
 /** Ensures the configured output directory exists and is writable. */
 async function ensureOutputFolder(folder: string): Promise<void> {
   try {
@@ -140,7 +160,12 @@ export function beginSession(): SessionHandle {
     stream,
     bytesWritten: 0,
     startedAt: Date.now(),
-    closing: null
+    closing: null,
+    voicePath: voiceTempPath(sessionId),
+    voiceStream: null,
+    voiceBytes: 0,
+    voiceClosing: null,
+    voiceFailed: false
   }
 
   sessions.set(sessionId, session)
@@ -181,6 +206,80 @@ export async function writeChunk(sessionId: string, chunk: ArrayBuffer): Promise
   })
 }
 
+/**
+ * Appends one chunk of the hard-panned audio copy.
+ *
+ * Deliberately quieter about failure than `writeChunk`. This file only ever
+ * feeds a transcript; the recording does not depend on it, and a disk that
+ * cannot take it is not a reason to fail a capture somebody is in the middle
+ * of. The write is dropped, it is said once in the log, and the recording
+ * carries on.
+ */
+export async function writeVoiceChunk(sessionId: string, chunk: ArrayBuffer): Promise<void> {
+  const session = sessions.get(sessionId)
+  if (!session || session.voiceFailed) return
+
+  if (!session.voiceStream) {
+    try {
+      const stream = createWriteStream(session.voicePath, { flags: 'w' })
+      /*
+       * Marked as failed rather than detached.
+       *
+       * The handle is kept so `closeVoiceStream` can still end it; dropping the
+       * reference here would leave the file open until the process exits.
+       */
+      stream.on('error', (error) => {
+        logger.warn(SCOPE, 'Voice stream error, dropping the voice track', { sessionId, error })
+        session.voiceFailed = true
+      })
+      session.voiceStream = stream
+    } catch (error) {
+      logger.warn(SCOPE, 'Voice track could not be opened', { sessionId, error })
+      session.voiceFailed = true
+      return
+    }
+  }
+
+  const stream = session.voiceStream
+  const buffer = Buffer.from(chunk)
+  session.voiceBytes += buffer.byteLength
+
+  if (stream.write(buffer)) return
+
+  /*
+   * Backpressure — and every way out of it, not just the happy one.
+   *
+   * Waiting on `drain` alone is a deadlock waiting to happen: a stream that
+   * errors or closes while full never drains, and this promise would never
+   * settle. It is awaited through the IPC call, the renderer's write chain and
+   * finally `stop()` — so a full disk here would hang the Stop button, on a
+   * file the recording does not even need.
+   */
+  await new Promise<void>((resolve) => {
+    const done = (): void => {
+      stream.off('drain', done)
+      stream.off('error', done)
+      stream.off('close', done)
+      resolve()
+    }
+
+    stream.once('drain', done)
+    stream.once('error', done)
+    stream.once('close', done)
+  })
+}
+
+function closeVoiceStream(session: ActiveSession): Promise<void> {
+  const stream = session.voiceStream
+  if (!stream) return Promise.resolve()
+  if (session.voiceClosing) return session.voiceClosing
+
+  session.voiceClosing = new Promise<void>((resolve) => {
+    stream.end(() => resolve())
+  })
+  return session.voiceClosing
+}
+
 function closeStream(session: ActiveSession): Promise<void> {
   if (session.closing) return session.closing
 
@@ -215,7 +314,7 @@ export async function finalizeSession(request: FinalizeRequest): Promise<Finaliz
     )
   }
 
-  await closeStream(session)
+  await Promise.all([closeStream(session), closeVoiceStream(session)])
   sessions.delete(request.sessionId)
 
   logger.info(SCOPE, 'Session closed, starting processing', {
@@ -226,6 +325,7 @@ export async function finalizeSession(request: FinalizeRequest): Promise<Finaliz
 
   if (session.bytesWritten === 0) {
     await safeUnlink(session.tempPath)
+    await safeUnlink(session.voicePath)
     throw new AppError(
       ERROR_CODES.SESSION_EMPTY,
       'The recording is empty.',
@@ -233,13 +333,16 @@ export async function finalizeSession(request: FinalizeRequest): Promise<Finaliz
     )
   }
 
-  return processIntermediate(request, session.tempPath)
+  const voiceUsable = session.voiceBytes > 0 && !session.voiceFailed
+
+  return processIntermediate(request, session.tempPath, voiceUsable ? session.voicePath : null)
 }
 
 /** Shared by normal finalisation and post-crash recovery. */
 async function processIntermediate(
   request: FinalizeRequest,
-  tempPath: string
+  tempPath: string,
+  voicePath: string | null = null
 ): Promise<FinalizeResult> {
   const settings = settingsStore.get()
 
@@ -292,6 +395,9 @@ async function processIntermediate(
       height: request.height
     })
 
+    // After the catalogue entry, because the id is what the file is named for.
+    const hasVoiceTrack = await adoptVoiceTrack(voicePath, recordingId)
+
     const fileSizeBytes = statSync(outputPath).size
     const result: FinalizeResult = {
       recordingId,
@@ -299,7 +405,8 @@ async function processIntermediate(
       fileSizeBytes,
       durationMs: request.durationMs,
       encoder: outcome.encoder,
-      usedFallbackEncoder: outcome.usedFallbackEncoder
+      usedFallbackEncoder: outcome.usedFallbackEncoder,
+      hasVoiceTrack
     }
 
     logger.info(SCOPE, 'Recording saved', result)
@@ -329,9 +436,10 @@ export async function abortSession(sessionId: string): Promise<void> {
   const session = sessions.get(sessionId)
   if (!session) return
 
-  await closeStream(session)
+  await Promise.all([closeStream(session), closeVoiceStream(session)])
   sessions.delete(sessionId)
   await safeUnlink(session.tempPath)
+  await safeUnlink(session.voicePath)
   logger.info(SCOPE, 'Session aborted', { sessionId })
 }
 
@@ -366,6 +474,14 @@ export function listOrphanRecordings(): OrphanRecording[] {
 
     for (const entry of entries) {
       if (!entry.startsWith(INTERMEDIATE_PREFIX) || !entry.endsWith(INTERMEDIATE_EXT)) continue
+
+      /*
+       * The voice scratch file ends in `.webm` too, and would otherwise be
+       * offered in the Recovery panel as an unfinished recording — an
+       * audio-only file presented as lost footage, under a session id with
+       * `.voice` glued to the end.
+       */
+      if (entry.endsWith(VOICE_TEMP_SUFFIX)) continue
 
       const sessionId = entry.slice(INTERMEDIATE_PREFIX.length, -INTERMEDIATE_EXT.length)
       if (sessions.has(sessionId)) continue
@@ -416,7 +532,10 @@ export async function restoreOrphan(sessionId: string): Promise<FinalizeResult> 
       hasAudio: true,
       mimeType: 'video/webm'
     },
-    orphan.tempPath
+    orphan.tempPath,
+    // A crash leaves both scratch files behind. The name is derived from the
+    // session id, so the voice half is recoverable with the video half.
+    existsSync(voiceTempPath(sessionId)) ? voiceTempPath(sessionId) : null
   )
 }
 
@@ -425,6 +544,7 @@ export async function discardOrphan(sessionId: string): Promise<void> {
   if (!orphan) return
 
   await safeUnlink(orphan.tempPath)
+  await safeUnlink(voiceTempPath(sessionId))
   logger.info(SCOPE, 'Discarded orphaned recording', { sessionId })
 }
 

@@ -1,7 +1,8 @@
 /**
  * Generates the build's image assets:
  *
- *  - `build/icon.png`             the application icon used by electron-builder
+ *  - `build/icon.png`             the application icon
+ *  - `build/icon.ico`             the same icon, as Windows wants it
  *  - `build/trayTemplate.png`     the macOS menu-bar icon (and its @2x variant)
  *
  * Everything is drawn procedurally and encoded as a PNG with Node's built-in
@@ -165,6 +166,56 @@ function drawTrayPixel(x, y, size) {
   return { r: 0, g: 0, b: 0, a: Math.round(255 * alpha) }
 }
 
+/**
+ * The same icon as a Windows `.ico`, so electron-builder never has to convert.
+ *
+ * Left to itself it runs a WebAssembly image tool over the PNG on every build,
+ * and that tool asks for a large contiguous allocation up front — on a machine
+ * that is short of memory it fails with `WebAssembly.Memory(): could not
+ * allocate memory` and takes the whole build with it. Writing the file here
+ * removes the step rather than making it more reliable.
+ *
+ * An `.ico` is a six-byte header, one sixteen-byte entry per size, and then the
+ * images themselves. Windows has accepted PNG-compressed entries since Vista,
+ * so the encoder already in this file is the only one needed — no dependency,
+ * which is the rule the rest of this script follows.
+ */
+function writeIco(fileName, sizes) {
+  const images = sizes.map((size) => ({ size, png: encodePng(buildRaster(size), size) }))
+
+  const header = Buffer.alloc(6)
+  header.writeUInt16LE(0, 0) // reserved
+  header.writeUInt16LE(1, 2) // 1 = icon
+  header.writeUInt16LE(images.length, 4)
+
+  const directory = Buffer.alloc(16 * images.length)
+  let offset = header.length + directory.length
+
+  images.forEach((image, index) => {
+    const at = index * 16
+
+    // 256 does not fit in a byte, and zero is how the format spells it.
+    directory.writeUInt8(image.size >= 256 ? 0 : image.size, at)
+    directory.writeUInt8(image.size >= 256 ? 0 : image.size, at + 1)
+    directory.writeUInt8(0, at + 2) // palette size: none, this is truecolour
+    directory.writeUInt8(0, at + 3) // reserved
+    directory.writeUInt16LE(1, at + 4) // colour planes
+    directory.writeUInt16LE(32, at + 6) // bits per pixel
+    directory.writeUInt32LE(image.png.length, at + 8)
+    directory.writeUInt32LE(offset, at + 12)
+
+    offset += image.png.length
+  })
+
+  const path = join(BUILD_DIR, fileName)
+  const file = Buffer.concat([header, directory, ...images.map((image) => image.png)])
+
+  writeFileSync(path, file)
+  console.log(
+    `Wrote ${path} (${sizes.join(', ')} px, ${(file.length / 1024).toFixed(1)} kB)`
+  )
+}
+
 function writeTrayIcon(fileName, size) {
   const png = encodePng(buildRaster(size, drawTrayPixel), size)
   const path = join(BUILD_DIR, fileName)
@@ -179,6 +230,12 @@ mkdirSync(BUILD_DIR, { recursive: true })
 const png = encodePng(buildRaster())
 writeFileSync(OUTPUT, png)
 console.log(`Wrote ${OUTPUT} (${SIZE}x${SIZE}, ${(png.length / 1024).toFixed(1)} kB)`)
+
+/*
+ * Every size Windows asks for, from the taskbar to the 256-pixel tile the
+ * installer and the Properties dialog use.
+ */
+writeIco('icon.ico', [16, 24, 32, 48, 64, 128, 256])
 
 // `nativeImage` picks the @2x file up automatically on Retina displays, and the
 // "Template" suffix is what marks the image as tintable to macOS.

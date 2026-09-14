@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { RecordingEntry } from '@shared/types'
+import { FileTranscriptDialog } from '@/components/FileTranscriptDialog'
 import { NoteDialog } from '@/components/NoteDialog'
+import { TranscriptPanel } from '@/components/TranscriptPanel'
 import { FilmIcon, RecordingTile, TileSkeletonGrid } from '@/components/RecordingTile'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
@@ -38,8 +40,12 @@ export function RecordingsPage({
    * loaded in the player above. Both are called "selected" in the UI and they
    * have to stay apart in the code, so this one is `chosen`.
    */
+  /** The player, so a transcript line can move it. */
+  const video = useRef<HTMLVideoElement>(null)
+
   const [chosen, setChosen] = useState<ReadonlySet<string>>(() => new Set())
   const [confirmBulk, setConfirmBulk] = useState(false)
+  const [fileTranscript, setFileTranscript] = useState(false)
   const [deleting, setDeleting] = useState(false)
 
   // Follow the caller's choice when navigating in from another page.
@@ -261,6 +267,7 @@ export function RecordingsPage({
             */
             <video
               key={selected.id}
+              ref={video}
               src={selected.playbackUrl}
               controls
               preload="metadata"
@@ -276,6 +283,28 @@ export function RecordingsPage({
                   Refresh, or remove the entry from the list.
                 </p>
               </div>
+            </div>
+          )}
+
+          {/*
+            Under the player rather than beside it. A transcript is read in long
+            lines, and a column narrow enough to sit alongside a 16:9 video turns
+            every line into three.
+          */}
+          {selected.available && (
+            <div className="mt-3 border-t border-hairline pt-3">
+              <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-faint">
+                Transcript
+              </p>
+              <TranscriptPanel
+                recordingId={selected.id}
+                onSeek={(seconds) => {
+                  const player = video.current
+                  if (!player) return
+                  player.currentTime = seconds
+                  void player.play().catch(() => undefined)
+                }}
+              />
             </div>
           )}
 
@@ -302,6 +331,12 @@ export function RecordingsPage({
         }
         actions={
           <>
+            {/* Not a recording, so it does not belong in the list below — but
+                this is where somebody already is when they want one read. */}
+            <Button size="sm" variant="ghost" onClick={() => setFileTranscript(true)}>
+              Transcribe a file…
+            </Button>
+
             <Button
               size="sm"
               variant="ghost"
@@ -394,6 +429,8 @@ export function RecordingsPage({
         onConfirm={() => void handleDeleteChosen()}
         onClose={() => setConfirmBulk(false)}
       />
+
+      <FileTranscriptDialog open={fileTranscript} onClose={() => setFileTranscript(false)} />
 
       <NoteDialog
         open={noteId !== null}

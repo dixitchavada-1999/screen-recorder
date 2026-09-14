@@ -1,4 +1,4 @@
-import { BrowserWindow, ipcMain, shell, app } from 'electron'
+import { BrowserWindow, dialog, ipcMain, shell, app } from 'electron'
 import { IPC } from '@shared/ipc'
 import type { DeepPartial } from '@shared/api'
 import type {
@@ -18,6 +18,7 @@ import type {
   TaskCardInput,
   TaskCardMove,
   TaskDueToday,
+  WhisperModelKey,
   TaskNote,
   LogPayload,
   MediaPermissions,
@@ -115,8 +116,20 @@ import {
   finalizeSession,
   listOrphanRecordings,
   restoreOrphan,
-  writeChunk
+  writeChunk,
+  writeVoiceChunk
 } from '../services/recording-session'
+import {
+  cancelTranscript,
+  fileIdFor,
+  transcribeFile,
+  transcribeRecording,
+  transcriptIsRunning
+} from '../services/transcribe'
+import { deleteTranscript, readTranscript, writeTranscript } from '../services/transcript-store'
+import { hasVoiceTrack } from '../services/voice-track'
+import { whisperIsAvailable } from '../services/whisper-locator'
+import { modelStatuses } from '../services/whisper-model'
 import {
   getMediaPermissions,
   openPrivacySettings,
@@ -781,6 +794,125 @@ export function registerIpcHandlers(): void {
       SCOPE,
       (_event: Electron.IpcMainInvokeEvent, sessionId: string, chunk: ArrayBuffer) =>
         writeChunk(sessionId, chunk)
+    )
+  )
+
+  /* ------------------------------ Transcripts ----------------------------- */
+
+  ipcMain.handle(
+    IPC.TRANSCRIPT_GET,
+    handled(SCOPE, (_event: Electron.IpcMainInvokeEvent, recordingId: string) =>
+      readTranscript(recordingId)
+    )
+  )
+
+  /*
+   * Transcribing, and storing the result in one step.
+   *
+   * Saved here rather than left to the renderer, so a window closed while the
+   * job runs does not throw away twenty minutes of work.
+   */
+  ipcMain.handle(
+    IPC.TRANSCRIPT_START,
+    handled(
+      SCOPE,
+      async (
+        _event: Electron.IpcMainInvokeEvent,
+        recordingId: string,
+        model?: WhisperModelKey
+      ) => {
+        const transcript = await transcribeRecording(recordingId, model)
+        await writeTranscript(transcript)
+        return transcript
+      }
+    )
+  )
+
+  ipcMain.handle(
+    IPC.TRANSCRIPT_CANCEL,
+    handled(SCOPE, (_event: Electron.IpcMainInvokeEvent, recordingId: string) => {
+      cancelTranscript(recordingId)
+    })
+  )
+
+  ipcMain.handle(
+    IPC.TRANSCRIPT_DELETE,
+    handled(SCOPE, (_event: Electron.IpcMainInvokeEvent, recordingId: string) =>
+      deleteTranscript(recordingId)
+    )
+  )
+
+  /**
+   * Picks a media file and transcribes it.
+   *
+   * The picker and the job are one call rather than two, because everything in
+   * between — turning a chosen path into an id, noticing that this exact file
+   * has been read before — is the main process's business and nothing the
+   * window would do differently.
+   *
+   * Returns null when the dialog was dismissed, which is not a failure.
+   */
+  ipcMain.handle(
+    IPC.TRANSCRIPT_PICK_FILE,
+    handled(SCOPE, async (event: Electron.IpcMainInvokeEvent) => {
+      const parent = BrowserWindow.fromWebContents(event.sender)
+
+      const options: Electron.OpenDialogOptions = {
+        title: 'Transcribe a file',
+        properties: ['openFile'],
+        filters: [
+          {
+            name: 'Video and audio',
+            extensions: [
+              'mp4', 'mkv', 'mov', 'webm', 'avi', 'm4v',
+              'mp3', 'wav', 'm4a', 'aac', 'ogg', 'opus', 'flac'
+            ]
+          },
+          { name: 'All files', extensions: ['*'] }
+        ]
+      }
+
+      const picked = parent
+        ? await dialog.showOpenDialog(parent, options)
+        : await dialog.showOpenDialog(options)
+
+      const path = picked.canceled ? null : (picked.filePaths[0] ?? null)
+      if (!path) return null
+
+      // Already read once: hand back what is stored rather than spending the
+      // minutes again on a file that has not changed.
+      const existing = await readTranscript(fileIdFor(path))
+      if (existing) return existing
+
+      const transcript = await transcribeFile(path)
+      await writeTranscript(transcript)
+      return transcript
+    })
+  )
+
+  ipcMain.handle(IPC.TRANSCRIPT_MODELS, handled(SCOPE, () => modelStatuses()))
+
+  /*
+   * What the Transcript panel needs before it can offer anything: whether the
+   * engine exists at all, whether this recording kept audio, and whether a job
+   * is already running.
+   */
+  ipcMain.handle(
+    IPC.TRANSCRIPT_AVAILABLE,
+    handled(SCOPE, async (_event: Electron.IpcMainInvokeEvent, recordingId: string) => ({
+      engineReady: await whisperIsAvailable(),
+      hasAudio: hasVoiceTrack(recordingId),
+      running: transcriptIsRunning(recordingId),
+      busy: transcriptIsRunning()
+    }))
+  )
+
+  ipcMain.handle(
+    IPC.RECORDING_WRITE_VOICE_CHUNK,
+    handled(
+      SCOPE,
+      (_event: Electron.IpcMainInvokeEvent, sessionId: string, chunk: ArrayBuffer) =>
+        writeVoiceChunk(sessionId, chunk)
     )
   )
 
