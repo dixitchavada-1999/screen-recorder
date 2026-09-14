@@ -112,6 +112,10 @@ export const IPC = {
   CALLS_SET_STATUS: 'calls:set-status',
   CALLS_DELETE: 'calls:delete',
 
+  /** The local MCP server that lets this employee's Claude manage their calls. */
+  MCP_GET_STATUS: 'mcp:get-status',
+  MCP_REGENERATE_TOKEN: 'mcp:regenerate-token',
+
   SHELL_OPEN_PATH: 'shell:open-path',
   SHELL_REVEAL_ITEM: 'shell:reveal-item',
 

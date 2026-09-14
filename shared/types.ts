@@ -752,6 +752,22 @@ export interface ScheduledCallRange {
   to: string
 }
 
+/* -------------------------------------------------------------------------- */
+/*                                 MCP server                                 */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The local MCP server that lets this employee's Claude schedule/list/cancel
+ * their own calls, instead of the Call Manager form. Loopback-only, gated by
+ * `token` — the Settings page turns this into a ready-made `.mcp.json` block.
+ */
+export interface McpServerStatus {
+  running: boolean
+  url: string
+  port: number
+  token: string
+}
+
 /** A warning about a call that is about to start, sent to the renderer for its own toast. */
 export interface CallReminder {
   callId: string

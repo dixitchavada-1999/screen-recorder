@@ -1,19 +1,22 @@
 import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
-import type { KpiNote, UserRole } from '@shared/types'
+import type { KpiNote, McpServerStatus, UserRole } from '@shared/types'
 import { REMINDER_LEAD_OPTIONS } from '@shared/presets'
 import { Avatar } from '@/components/AuthDialog'
 import { KpiDialog } from '@/components/KpiDialog'
 import { UpdateBanner } from '@/components/UpdateBanner'
 import { Button } from '@/components/ui/Button'
-import { Card } from '@/components/ui/Card'
+import { Card, Field } from '@/components/ui/Card'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { Toggle } from '@/components/ui/Controls'
+import { Modal } from '@/components/ui/Modal'
 import { Tooltip } from '@/components/ui/Tooltip'
 import { useAuth } from '@/context/AuthContext'
 import { useSettings } from '@/context/SettingsContext'
 import { useToast } from '@/context/ToastContext'
 import { useAppUpdate } from '@/hooks/useAppUpdate'
 import { useKpiNotes } from '@/hooks/useKpiNotes'
+import { useMcpServer } from '@/hooks/useMcpServer'
 import { useTasksDueToday } from '@/hooks/useTasksDueToday'
 import { CallManager } from '@/pages/CallManager'
 import { RolesPage } from '@/pages/RolesPage'
@@ -139,7 +142,7 @@ export function AccountPage({
   return (
     <div className="grid grid-cols-[11rem_1fr] gap-4 sm:grid-cols-[13rem_1fr]">
       {/* ------------------------------- Menu ------------------------------- */}
-      <nav className="h-fit rounded-2xl border border-hairline bg-canvas-elevated/70 p-2">
+      <nav className="sticky top-4 h-fit max-h-[calc(100vh-2rem)] self-start overflow-y-auto rounded-2xl border border-hairline bg-canvas-elevated/70 p-2">
         <div className="flex items-center gap-2.5 px-2 py-2.5">
           <Avatar name={user.name} size="lg" />
           <div className="min-w-0">
@@ -599,6 +602,9 @@ function AccountSettings({ currentName }: { currentName: string }): React.JSX.El
       {/* --------------------------- Notifications -------------------------- */}
       <CallReminderSettings />
 
+      {/* -------------------------- AI Call Assistant ------------------------ */}
+      <McpServerSettings />
+
       {/* ----------------------------- Sessions ----------------------------- */}
       <Card title="Sessions" description="Where this account is currently signed in">
         <p className="text-xs leading-relaxed text-faint">
@@ -747,6 +753,197 @@ function CallReminderSettings(): React.JSX.Element {
         )}
       </div>
     </Card>
+  )
+}
+
+/**
+ * The local MCP server that lets this employee's own Claude schedule, list and
+ * cancel their calls instead of going through the Call Manager form.
+ *
+ * Lives with the account rather than on the app's machine-level Settings tab:
+ * every tool it exposes calls straight into the signed-in account's own calls,
+ * so it only means anything once somebody is signed in — exactly the condition
+ * that gates the rest of this screen.
+ */
+function McpServerSettings(): React.JSX.Element {
+  const { push } = useToast()
+  const mcp = useMcpServer()
+  const [showToken, setShowToken] = useState(false)
+  const [confirmingReset, setConfirmingReset] = useState(false)
+  const [showHelp, setShowHelp] = useState(false)
+
+  const copyConfig = async (status: McpServerStatus): Promise<void> => {
+    const config = JSON.stringify(
+      {
+        mcpServers: {
+          'screen-recorder-calls': {
+            type: 'http',
+            url: status.url,
+            headers: { Authorization: `Bearer ${status.token}` }
+          }
+        }
+      },
+      null,
+      2
+    )
+
+    try {
+      await navigator.clipboard.writeText(config)
+      push({ tone: 'success', title: 'Config copied', description: 'Paste it into your .mcp.json.' })
+    } catch {
+      push({ tone: 'error', title: 'Could not copy', description: 'The clipboard refused.' })
+    }
+  }
+
+  const handleRegenerate = async (): Promise<void> => {
+    try {
+      await mcp.regenerateToken()
+      push({
+        tone: 'success',
+        title: 'Token regenerated',
+        description: 'Copy the config again and paste it wherever this was connected before.'
+      })
+    } catch (caught) {
+      const error = toSerializedError(caught)
+      push({ tone: 'error', title: error.message, ...(error.hint ? { description: error.hint } : {}) })
+    } finally {
+      setConfirmingReset(false)
+    }
+  }
+
+  return (
+    <Card
+      title="AI Call Assistant"
+      description="Schedule, list and cancel your own calls by talking to Claude instead of the form above."
+      actions={
+        <Button size="sm" variant="ghost" onClick={() => setShowHelp(true)}>
+          How to use
+        </Button>
+      }
+    >
+      {mcp.loading ? (
+        <p className="text-xs text-faint">Checking…</p>
+      ) : mcp.status ? (
+        <div className="flex flex-col gap-4">
+          <div className="flex items-center gap-2 text-xs">
+            <span
+              className={cn('size-2 rounded-full', mcp.status.running ? 'bg-positive' : 'bg-record')}
+              aria-hidden="true"
+            />
+            <span className="text-muted">
+              {mcp.status.running ? 'Running' : 'Not running'} — {mcp.status.url}
+            </span>
+          </div>
+
+          <Field
+            label="Token"
+            hint="Kept locally, loopback-only. Copy the config below rather than typing this by hand."
+          >
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="selectable min-w-0 flex-1 truncate rounded-xl border border-hairline bg-surface px-3 py-2.5 font-mono text-xs text-ink">
+                {showToken ? mcp.status.token : '•'.repeat(24)}
+              </p>
+              <Button size="sm" variant="ghost" onClick={() => setShowToken((value) => !value)}>
+                {showToken ? 'Hide' : 'Show'}
+              </Button>
+            </div>
+          </Field>
+
+          <div className="flex flex-wrap gap-2">
+            <Button size="md" variant="secondary" onClick={() => void copyConfig(mcp.status!)}>
+              Copy config for Claude
+            </Button>
+            <Button size="md" variant="ghost" onClick={() => setConfirmingReset(true)}>
+              Regenerate token
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <p className="text-xs text-record-strong">Could not reach the local MCP server.</p>
+      )}
+
+      <ConfirmDialog
+        open={confirmingReset}
+        title="Regenerate the MCP token?"
+        description="Any Claude connection already set up with the current token will stop working until you copy the new config and paste it in again."
+        confirmLabel="Regenerate"
+        busy={mcp.regenerating}
+        onConfirm={() => void handleRegenerate()}
+        onClose={() => setConfirmingReset(false)}
+      />
+
+      <McpHelpModal open={showHelp} onClose={() => setShowHelp(false)} />
+    </Card>
+  )
+}
+
+/** Walks through connecting Claude to this account's calls, end to end. */
+function McpHelpModal({ open, onClose }: { open: boolean; onClose: () => void }): React.JSX.Element {
+  return (
+    <Modal open={open} title="Connect Claude to your calls" onClose={onClose}>
+      <ol className="flex flex-col gap-4 text-sm leading-relaxed text-ink">
+        <HelpStep n={1} title="Copy the config">
+          Above, press <span className="font-medium">Copy config for Claude</span>. This copies a
+          ready-made block with the local address and your token — nothing to type by hand.
+        </HelpStep>
+
+        <HelpStep n={2} title="Paste it where Claude looks for it">
+          <span className="font-medium">Claude Code:</span> create a file named{' '}
+          <code className="rounded bg-surface px-1 py-0.5 font-mono text-xs">.mcp.json</code> in the
+          project folder you work in, and paste the copied block in.
+          <br />
+          <span className="font-medium">Claude Desktop:</span> open Settings →{' '}
+          Developer → Edit Config, and paste it into{' '}
+          <code className="rounded bg-surface px-1 py-0.5 font-mono text-xs">
+            claude_desktop_config.json
+          </code>{' '}
+          instead.
+        </HelpStep>
+
+        <HelpStep n={3} title="Restart Claude">
+          Close and reopen Claude Code or Claude Desktop so it picks up the new server. It only
+          works while this app is running on this computer and you are signed in.
+        </HelpStep>
+
+        <HelpStep n={4} title="Try it">
+          Ask things like <em>&quot;Schedule a call tomorrow at 5pm, 30 minutes&quot;</em>,{' '}
+          <em>&quot;What calls do I have this week?&quot;</em>, or{' '}
+          <em>&quot;Cancel my 5pm call&quot;</em>.
+        </HelpStep>
+
+        <HelpStep n={5} title="Check it landed">
+          Open <span className="font-medium">Calendar</span> in this sidebar — anything Claude does
+          shows up there immediately, same as scheduling it by hand.
+        </HelpStep>
+      </ol>
+
+      <p className="mt-5 rounded-xl border border-hairline bg-surface/60 px-3 py-2.5 text-xs leading-relaxed text-faint">
+        If the token is ever regenerated, the old config stops working — copy it again and paste it
+        in wherever this was connected.
+      </p>
+    </Modal>
+  )
+}
+
+function HelpStep({
+  n,
+  title,
+  children
+}: {
+  n: number
+  title: string
+  children: ReactNode
+}): React.JSX.Element {
+  return (
+    <li className="flex gap-3">
+      <span className="grid size-6 shrink-0 place-items-center rounded-full bg-accent/15 text-xs font-semibold text-accent-strong">
+        {n}
+      </span>
+      <div className="min-w-0">
+        <p className="font-medium text-ink">{title}</p>
+        <p className="mt-0.5 text-xs leading-relaxed text-muted">{children}</p>
+      </div>
+    </li>
   )
 }
 

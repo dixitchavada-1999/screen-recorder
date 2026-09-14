@@ -14,6 +14,7 @@ import type {
   IpcResult,
   KpiNote,
   LogPayload,
+  McpServerStatus,
   MediaPermissions,
   OrphanRecording,
   PermissionInfo,
@@ -322,6 +323,13 @@ export interface RecorderApi {
      * in-app half.
      */
     onReminder(listener: (reminder: CallReminder) => void): Unsubscribe
+  }
+
+  mcp: {
+    /** Whether the local MCP server is running, and the URL/token to paste into `.mcp.json`. */
+    getStatus(): Promise<IpcResult<McpServerStatus>>
+    /** Rotates the token, invalidating any `.mcp.json` already pasted elsewhere. */
+    regenerateToken(): Promise<IpcResult<McpServerStatus>>
   }
 
   /**

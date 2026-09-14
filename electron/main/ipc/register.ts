@@ -97,6 +97,7 @@ import { readActivityDay } from '../services/activity-day'
 import { currentPolicy, refreshPolicy } from '../services/tracking-policy'
 import { listTrackedPeople, setTrackingPolicyFor } from '../services/tracked-people'
 import { refreshReminders } from '../services/reminders'
+import { getStatus as getMcpStatus, regenerateToken as regenerateMcpToken } from '../services/mcp-server'
 import { getFfmpegVersion, resolveFfmpegPath } from '../services/ffmpeg-locator'
 import {
   chooseLibraryFolder,
@@ -722,6 +723,19 @@ export function registerIpcHandlers(): void {
     handled(SCOPE, async (_event: Electron.IpcMainInvokeEvent, id: string) => {
       await deleteCall(id)
       void refreshReminders()
+    })
+  )
+
+  ipcMain.handle(
+    IPC.MCP_GET_STATUS,
+    handled(SCOPE, () => getMcpStatus())
+  )
+
+  ipcMain.handle(
+    IPC.MCP_REGENERATE_TOKEN,
+    handled(SCOPE, () => {
+      regenerateMcpToken()
+      return getMcpStatus()
     })
   )
 

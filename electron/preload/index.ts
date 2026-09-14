@@ -175,6 +175,11 @@ const api: RecorderApi = {
     onReminder: (listener) => subscribe<CallReminder>(IPC.EVENT_CALL_REMINDER, listener)
   },
 
+  mcp: {
+    getStatus: () => ipcRenderer.invoke(IPC.MCP_GET_STATUS),
+    regenerateToken: () => ipcRenderer.invoke(IPC.MCP_REGENERATE_TOKEN)
+  },
+
   shell: {
     openPath: (target: string) => ipcRenderer.invoke(IPC.SHELL_OPEN_PATH, target),
     revealItem: (target: string) => ipcRenderer.invoke(IPC.SHELL_REVEAL_ITEM, target)

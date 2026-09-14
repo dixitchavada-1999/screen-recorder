@@ -24,6 +24,7 @@ import { startReminders, stopReminders } from './services/reminders'
 import { initUpdater, stopUpdater } from './services/updater'
 import { startRosterSync, stopRosterSync } from './services/roster'
 import { startCallNotifier, stopCallNotifier } from './services/call-notifier'
+import { startMcpServer, stopMcpServer } from './services/mcp-server'
 import { settingsStore } from './services/settings-store'
 import { HIDDEN_FLAG, applyLoginItem, wasLaunchedAtLogin } from './services/startup'
 import { cancelActiveTranscode } from './services/transcoder'
@@ -199,6 +200,10 @@ async function onReady(): Promise<void> {
   // copy asks; the server hands each one to exactly one of them.
   startCallNotifier()
 
+  // Lets this employee's own Claude schedule/list/cancel their own calls,
+  // loopback-only and gated by a local token — see Settings.
+  startMcpServer()
+
   // Puts this person's choice of warnings somewhere the server can read it, so
   // their Slack message arrives when they asked rather than at a fixed time.
   startReminderPrefs()
@@ -323,6 +328,7 @@ async function finishShutdown(): Promise<void> {
     stopUpdater()
     stopRosterSync()
     stopCallNotifier()
+    stopMcpServer()
     stopTrackingPolicy()
     stopActivityUpload()
     // Before the recorders below close their windows: a gap reported mid
