@@ -203,6 +203,7 @@ const api: RecorderApi = {
       ipcRenderer.invoke(IPC.RECORDING_WRITE_VOICE_CHUNK, sessionId, chunk),
     finalize: (request: FinalizeRequest) => ipcRenderer.invoke(IPC.RECORDING_FINALIZE, request),
     abort: (sessionId: string) => ipcRenderer.invoke(IPC.RECORDING_ABORT, sessionId),
+    cancelProcessing: () => ipcRenderer.invoke(IPC.RECORDING_CANCEL_PROCESSING),
     onProgress: (listener) =>
       subscribe<ProcessingProgress>(IPC.EVENT_PROCESSING_PROGRESS, listener)
   },

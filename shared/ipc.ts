@@ -142,6 +142,8 @@ export const IPC = {
   TRANSCRIPT_PICK_FILE: 'transcript:pick-file',
   RECORDING_FINALIZE: 'recording:finalize',
   RECORDING_ABORT: 'recording:abort',
+  /** Stops an in-progress conversion; the raw recording is kept for retry. */
+  RECORDING_CANCEL_PROCESSING: 'recording:cancel-processing',
 
   RECOVERY_LIST: 'recovery:list',
   RECOVERY_RESTORE: 'recovery:restore',
@@ -201,6 +203,8 @@ export type IpcChannel = (typeof IPC)[keyof typeof IPC]
 export const ERROR_CODES = {
   FFMPEG_MISSING: 'FFMPEG_MISSING',
   FFMPEG_FAILED: 'FFMPEG_FAILED',
+  /** The user cancelled an in-progress conversion; not a real failure. */
+  CONVERSION_CANCELLED: 'CONVERSION_CANCELLED',
   SESSION_NOT_FOUND: 'SESSION_NOT_FOUND',
   SESSION_EMPTY: 'SESSION_EMPTY',
   WRITE_FAILED: 'WRITE_FAILED',

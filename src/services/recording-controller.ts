@@ -588,6 +588,20 @@ class RecordingController {
     log.info(SCOPE, 'Recording cancelled')
   }
 
+  /**
+   * Stops an in-progress conversion.
+   *
+   * Kills FFmpeg on the main process side; the `finalize()` call already
+   * in-flight inside `stop()` then rejects on its own, with a message that
+   * reads as a cancel rather than a crash — nothing further to do here.
+   */
+  cancelProcessing(): void {
+    if (this.snapshot.state !== 'processing') return
+    void window.api.recording.cancelProcessing().catch((error: unknown) => {
+      log.warn(SCOPE, 'Failed to cancel processing', error)
+    })
+  }
+
   /** Mirrors `stopMediaRecorder`, but a stall here is never worth waiting on. */
   private stopVoiceRecorder(): Promise<void> {
     const recorder = this.voiceRecorder

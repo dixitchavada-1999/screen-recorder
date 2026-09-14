@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { ERROR_CODES } from '@shared/ipc'
 import type { AppSettings, RecordingEntry } from '@shared/types'
 import type { DeepPartial } from '@shared/api'
 import { AudioPanel } from '@/components/AudioPanel'
@@ -75,12 +76,16 @@ export function RecorderPage({
     if (!isLive) selectionStore.reconcile(sources)
   }, [sources, isLive])
 
-  // Surface recorder failures as toasts rather than silent state.
+  // Surface recorder failures as toasts rather than silent state. A cancelled
+  // conversion is not a failure, so it reads as a neutral notice rather than
+  // the same red banner as a genuine crash.
   useEffect(() => {
     if (snapshot.state !== 'error' || !snapshot.error) return
 
+    const cancelled = snapshot.error.code === ERROR_CODES.CONVERSION_CANCELLED
+
     push({
-      tone: 'error',
+      tone: cancelled ? 'info' : 'error',
       title: snapshot.error.message,
       ...(snapshot.error.hint ? { description: snapshot.error.hint } : {})
     })
@@ -198,6 +203,7 @@ export function RecorderPage({
         onPause={transport.pause}
         onResume={transport.resume}
         onCancel={() => void transport.cancel()}
+        onCancelProcessing={() => recordingController.cancelProcessing()}
         onViewAll={onViewAll}
         sources={sources}
         selectedSourceId={selectedSource?.id ?? null}

@@ -1,6 +1,7 @@
 import type { CaptureSource, RecordingState } from '@shared/types'
 import { Button } from '@/components/ui/Button'
 import { ProgressBar, Select } from '@/components/ui/Controls'
+import { Tooltip } from '@/components/ui/Tooltip'
 import { cn } from '@/utils/cn'
 import { formatBytes, formatDuration } from '@/utils/format'
 import type { RecorderSnapshot } from '@/services/recording-controller'
@@ -13,6 +14,8 @@ interface StatusPanelProps {
   onPause: () => void
   onResume: () => void
   onCancel: () => void
+  /** Stops an in-progress conversion; the raw recording is kept for retry. */
+  onCancelProcessing: () => void
   /** Opens the recordings library. */
   onViewAll: () => void
   /** Capturable screens and windows, for the compact source selector. */
@@ -43,6 +46,7 @@ export function StatusPanel({
   onPause,
   onResume,
   onCancel,
+  onCancelProcessing,
   onViewAll,
   sources,
   selectedSourceId,
@@ -165,15 +169,31 @@ export function StatusPanel({
       {/* Conversion progress */}
       {(state === 'processing' || snapshot.progress) && (
         <div className="mt-6 rounded-xl border border-hairline bg-surface/60 p-4">
-          <div className="mb-2 flex items-center justify-between text-xs">
-            <span className="font-medium text-ink">
+          <div className="mb-2 flex items-center justify-between gap-3 text-xs">
+            <span className="min-w-0 truncate font-medium text-ink">
               {snapshot.progress?.detail ?? 'Converting to MP4'}
             </span>
-            {snapshot.progress && snapshot.progress.percent > 0 && (
-              <span className="font-mono text-muted">
-                {Math.round(snapshot.progress.percent)}%
-              </span>
-            )}
+
+            <div className="flex shrink-0 items-center gap-2">
+              {snapshot.progress && snapshot.progress.percent > 0 && (
+                <span className="font-mono text-muted">
+                  {Math.round(snapshot.progress.percent)}%
+                </span>
+              )}
+
+              {state === 'processing' && (
+                <Tooltip label="Cancel conversion">
+                  <button
+                    type="button"
+                    onClick={onCancelProcessing}
+                    aria-label="Cancel conversion"
+                    className="grid size-5 place-items-center rounded-md text-faint transition-colors hover:bg-record/10 hover:text-record-strong"
+                  >
+                    <CancelIcon />
+                  </button>
+                </Tooltip>
+              )}
+            </div>
           </div>
           <ProgressBar
             percent={
@@ -249,6 +269,20 @@ const PauseIcon = (): React.JSX.Element => (
 const PlayIcon = (): React.JSX.Element => (
   <svg aria-hidden="true" viewBox="0 0 20 20" fill="currentColor" className="size-4">
     <path d="M6 4l10 6-10 6V4z" />
+  </svg>
+)
+
+const CancelIcon = (): React.JSX.Element => (
+  <svg
+    aria-hidden="true"
+    viewBox="0 0 20 20"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.8"
+    strokeLinecap="round"
+    className="size-3.5"
+  >
+    <path d="M6 6l8 8M14 6l-8 8" />
   </svg>
 )
 

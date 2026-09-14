@@ -156,6 +156,8 @@ function buildArgs(options: TranscodeOptions, encoder: string, copyVideo: boolea
 
 /** Tracks the running child so an app quit can terminate it cleanly. */
 let activeChild: ChildProcessWithoutNullStreams | null = null
+/** Set just before killing `activeChild` deliberately, so its exit reads as a cancel, not a crash. */
+let cancelRequested = false
 
 function runFfmpeg(
   binary: string,
@@ -212,10 +214,24 @@ function runFfmpeg(
 
     child.on('close', (code) => {
       activeChild = null
+
       if (code === 0) {
         resolve()
         return
       }
+
+      if (cancelRequested) {
+        cancelRequested = false
+        reject(
+          new AppError(
+            ERROR_CODES.CONVERSION_CANCELLED,
+            'Conversion cancelled.',
+            'The raw recording was kept so you can convert it again from Recovery.'
+          )
+        )
+        return
+      }
+
       reject(
         new AppError(
           ERROR_CODES.FFMPEG_FAILED,
@@ -293,12 +309,19 @@ export async function transcodeToMp4(options: TranscodeOptions): Promise<Transco
   }
 }
 
-/** Terminates a running conversion, e.g. when the user quits mid-encode. */
+/**
+ * Terminates a running conversion.
+ *
+ * Used both for an app quit mid-encode and for the user pressing Cancel on the
+ * progress bar — `cancelRequested` is what tells the two apart in the exit
+ * handler above, so only the second one is reported back as a cancel rather
+ * than a crash.
+ */
 export function cancelActiveTranscode(): void {
   if (!activeChild) return
+  cancelRequested = true
   logger.warn(SCOPE, 'Terminating active FFmpeg process')
   activeChild.kill('SIGKILL')
-  activeChild = null
 }
 
 function formatClock(ms: number): string {

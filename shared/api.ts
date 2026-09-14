@@ -395,6 +395,8 @@ export interface RecorderApi {
     finalize(request: FinalizeRequest): Promise<IpcResult<FinalizeResult>>
     /** Discards a session and removes its intermediate file. */
     abort(sessionId: string): Promise<IpcResult<void>>
+    /** Stops the in-progress conversion; the raw recording is kept for retry. */
+    cancelProcessing(): Promise<IpcResult<void>>
     onProgress(listener: (progress: ProcessingProgress) => void): Unsubscribe
   }
 

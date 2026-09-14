@@ -98,6 +98,7 @@ import { currentPolicy, refreshPolicy } from '../services/tracking-policy'
 import { listTrackedPeople, setTrackingPolicyFor } from '../services/tracked-people'
 import { refreshReminders } from '../services/reminders'
 import { getStatus as getMcpStatus, regenerateToken as regenerateMcpToken } from '../services/mcp-server'
+import { cancelActiveTranscode } from '../services/transcoder'
 import { getFfmpegVersion, resolveFfmpegPath } from '../services/ffmpeg-locator'
 import {
   chooseLibraryFolder,
@@ -942,6 +943,11 @@ export function registerIpcHandlers(): void {
     handled(SCOPE, (_event: Electron.IpcMainInvokeEvent, sessionId: string) =>
       abortSession(sessionId)
     )
+  )
+
+  ipcMain.handle(
+    IPC.RECORDING_CANCEL_PROCESSING,
+    handled(SCOPE, () => cancelActiveTranscode())
   )
 
   /* ------------------------------- Recovery ------------------------------- */
