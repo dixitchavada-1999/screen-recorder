@@ -15,10 +15,11 @@ export interface CodecChoice {
 /**
  * Candidate containers in preference order.
  *
- * H.264 is preferred over VP9 for one reason: MP4 output. An H.264 capture is
- * remuxed in a second with no quality loss and almost no CPU, whereas VP9 must
- * be fully transcoded. VP9/VP8 remain as fallbacks for builds of Chromium
- * without an H.264 encoder.
+ * H.264 is preferred because Chromium can usually encode it on the GPU, which
+ * leaves the CPU free for the capture itself; VP9 is far heavier to encode in
+ * real time. FFmpeg re-encodes the video to a constant frame rate afterwards
+ * whatever the codec, so this choice is about capture cost, not the MP4.
+ * VP9/VP8 remain as fallbacks for builds of Chromium without an H.264 encoder.
  */
 const CANDIDATES: ReadonlyArray<{ mimeType: string; h264: boolean; label: string }> = [
   { mimeType: 'video/x-matroska;codecs=avc1,opus', h264: true, label: 'H.264 / Opus (Matroska)' },
@@ -53,8 +54,7 @@ export function pickRecordingCodec(): CodecChoice {
  * Bitrate handed to MediaRecorder for the intermediate capture.
  *
  * It is deliberately generous: this file is an intermediate, and starving it
- * would bake compression artefacts in before FFmpeg ever runs. When the capture
- * is H.264 the same bitrate carries straight through to the MP4.
+ * would bake compression artefacts in before FFmpeg ever runs.
  */
 export function computeCaptureBitrate(
   width: number,

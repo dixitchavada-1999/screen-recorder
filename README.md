@@ -189,8 +189,8 @@ Recorder flushes, streams close, session file is complete
         |
         v
 FFmpeg converts to MP4
-   • video already H.264  ->  stream copy (seconds, no quality loss)
-   • otherwise            ->  re-encode (libx264 or GPU encoder)
+   • video                ->  re-encode to a constant frame rate
+                              (GPU encoder, or libx264 as a fallback)
    • audio Opus           ->  AAC 48 kHz stereo
         |
         v
@@ -817,12 +817,12 @@ appended to the session file immediately. A three-hour recording uses the same
 RAM as a three-second one. Stream backpressure is honoured, so a slow disk
 cannot grow an unbounded write queue.
 
-**Encoding is usually free.** The recorder prefers H.264 for the intermediate
-capture. When it gets it, FFmpeg *stream-copies* the video into MP4 rather than
-re-encoding: a 54-second 1080p recording finalises in under two seconds with no
-generation loss. Only the Opus audio is converted, to AAC. Re-encoding happens
-only if Chromium had no H.264 encoder, or you asked for a smaller resolution
-than the capture.
+**Video is always re-encoded, to a constant frame rate.** Chromium's desktop
+capturer delivers frames unevenly — at 30 fps the gaps wander between roughly
+27 and 45 ms — and stream-copying those timestamps into the MP4 played back with
+visible judder. FFmpeg therefore re-encodes every recording at the configured
+frame rate. With a GPU encoder (NVENC, Quick Sync, AMF, VideoToolbox) a 54-second
+1080p recording finalises in about five seconds; the libx264 fallback is slower.
 
 **Capture-time scaling.** Resolution limits are passed to `getUserMedia`, so the
 compositor downsamples on the GPU before frames reach the app — much cheaper

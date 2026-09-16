@@ -36,23 +36,16 @@ const HARDWARE_ENCODERS: Record<string, string[]> = {
 /*                              Encoder selection                             */
 /* -------------------------------------------------------------------------- */
 
-/**
- * The renderer records H.264 whenever Chromium supports it. When the source is
- * already H.264 and no rescaling is requested, the video track is stream-copied
- * instead of re-encoded: near-instant finalisation, zero generation loss and
- * almost no CPU cost.
+/*
+ * The video is always re-encoded, even when the capture is already H.264.
+ *
+ * Chromium's desktop capturer does not deliver frames on a steady clock: at
+ * 30 fps the gap between frames wanders between roughly 27 and 45 ms, with
+ * longer holes whenever the machine is busy. Stream-copying kept those
+ * timestamps as they were, and the result played back with visible judder.
+ * Re-encoding to a constant frame rate lays every frame on an even grid, and a
+ * GPU encoder does it at several times real time.
  */
-function canStreamCopyVideo(request: FinalizeRequest, settings: AppSettings): boolean {
-  const mime = request.mimeType.toLowerCase()
-  const isH264 = mime.includes('h264') || mime.includes('avc1')
-  if (!isH264) return false
-
-  const target = RESOLUTIONS[settings.video.resolution]
-  if (target.height === null) return true
-
-  // Capture was already constrained to the target size by getUserMedia.
-  return request.height <= target.height && request.width <= (target.width ?? request.width)
-}
 
 async function pickVideoEncoder(settings: AppSettings): Promise<string> {
   if (!settings.video.hardwareAcceleration) return 'libx264'
@@ -76,7 +69,7 @@ const isHardwareEncoder = (encoder: string): boolean => encoder !== 'libx264'
 /*                              Argument building                             */
 /* -------------------------------------------------------------------------- */
 
-function buildArgs(options: TranscodeOptions, encoder: string, copyVideo: boolean): string[] {
+function buildArgs(options: TranscodeOptions, encoder: string): string[] {
   const { settings, request, inputPath, outputPath } = options
   const quality = QUALITIES[settings.video.quality]
   const target = RESOLUTIONS[settings.video.resolution]
@@ -94,46 +87,45 @@ function buildArgs(options: TranscodeOptions, encoder: string, copyVideo: boolea
     '-i', inputPath
   ]
 
-  if (copyVideo) {
-    args.push('-c:v', 'copy')
-  } else {
-    const bitrate = computeVideoBitrateKbps(
-      settings.video.resolution,
-      settings.video.fps,
-      settings.video.quality
-    )
+  const bitrate = computeVideoBitrateKbps(
+    settings.video.resolution,
+    settings.video.fps,
+    settings.video.quality
+  )
 
-    // Scale only when a fixed output size is requested. `-2` keeps the width
-    // even (required by yuv420p) while preserving the source aspect ratio.
-    if (target.height !== null) {
-      args.push('-vf', `scale=-2:${target.height}:flags=bicubic`)
-    }
+  // Capture was already constrained to the target size by getUserMedia, so
+  // scale only a source that came out larger — never upscale. `-2` keeps the
+  // width even (required by yuv420p) while preserving the aspect ratio.
+  if (target.height !== null && request.height > target.height) {
+    args.push('-vf', `scale=-2:${target.height}:flags=bicubic`)
+  }
 
-    args.push('-c:v', encoder)
+  args.push('-c:v', encoder)
 
-    if (isHardwareEncoder(encoder)) {
-      // GPU encoders ignore CRF, so drive them with a VBR bitrate envelope.
-      args.push(
-        '-b:v', `${bitrate}k`,
-        '-maxrate', `${Math.round(bitrate * 1.5)}k`,
-        '-bufsize', `${bitrate * 2}k`
-      )
-    } else {
-      args.push(
-        '-preset', quality.x264Preset,
-        '-crf', String(quality.crf),
-        '-maxrate', `${Math.round(bitrate * 1.5)}k`,
-        '-bufsize', `${bitrate * 2}k`
-      )
-    }
-
+  if (isHardwareEncoder(encoder)) {
+    // GPU encoders ignore CRF, so drive them with a VBR bitrate envelope.
     args.push(
-      // Normalise the variable-frame-rate capture to a constant output rate.
-      '-r', String(settings.video.fps),
-      // Required for playback in QuickTime, Windows Media Player and browsers.
-      '-pix_fmt', 'yuv420p'
+      '-b:v', `${bitrate}k`,
+      '-maxrate', `${Math.round(bitrate * 1.5)}k`,
+      '-bufsize', `${bitrate * 2}k`
+    )
+  } else {
+    args.push(
+      '-preset', quality.x264Preset,
+      '-crf', String(quality.crf),
+      '-maxrate', `${Math.round(bitrate * 1.5)}k`,
+      '-bufsize', `${bitrate * 2}k`
     )
   }
+
+  args.push(
+    // Normalise the variable-frame-rate capture to a constant output rate. For
+    // MP4 an output `-r` implies constant-rate sync on every FFmpeg version, so
+    // the newer `-fps_mode cfr` spelling is not needed.
+    '-r', String(settings.video.fps),
+    // Required for playback in QuickTime, Windows Media Player and browsers.
+    '-pix_fmt', 'yuv420p'
+  )
 
   if (request.hasAudio) {
     args.push('-c:a', 'aac', '-b:a', `${quality.audioKbps}k`, '-ar', '48000', '-ac', '2')
@@ -271,35 +263,33 @@ export async function transcodeToMp4(options: TranscodeOptions): Promise<Transco
     )
   }
 
-  const copyVideo = canStreamCopyVideo(options.request, options.settings)
-  const encoder = copyVideo ? 'copy' : await pickVideoEncoder(options.settings)
+  const encoder = await pickVideoEncoder(options.settings)
 
   logger.info(SCOPE, 'Starting conversion', {
     encoder,
-    copyVideo,
     sourceSize,
     durationMs: options.request.durationMs
   })
 
-  options.onProgress(1, copyVideo ? 'Remuxing to MP4' : `Encoding with ${encoder}`)
+  options.onProgress(1, `Encoding with ${encoder}`)
 
   try {
     await runFfmpeg(
       binary,
-      buildArgs(options, encoder, copyVideo),
+      buildArgs(options, encoder),
       options.request.durationMs,
       options.onProgress
     )
     return { encoder, usedFallbackEncoder: false }
   } catch (error) {
     // A hardware encoder failure is recoverable — retry on the CPU encoder.
-    if (!copyVideo && isHardwareEncoder(encoder)) {
+    if (isHardwareEncoder(encoder)) {
       logger.warn(SCOPE, 'Hardware encoder failed, retrying with libx264', error)
       options.onProgress(1, 'Hardware encoder unavailable, retrying on CPU')
 
       await runFfmpeg(
         binary,
-        buildArgs(options, 'libx264', false),
+        buildArgs(options, 'libx264'),
         options.request.durationMs,
         options.onProgress
       )

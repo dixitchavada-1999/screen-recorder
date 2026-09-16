@@ -343,10 +343,19 @@ function Dashboard(): React.JSX.Element {
    */
   const [refreshing, setRefreshing] = useState(false)
 
+  /*
+   * Also asks whether a newer version has been published.
+   *
+   * The automatic check runs on its own timer and stays silent when it finds
+   * nothing new — by design, so a flaky connection never nags. Refresh is the
+   * one button already on this screen that means "tell me what's current
+   * right now", so it re-asks the update server too rather than leaving that
+   * to a 30-minute wait with no way to hurry it.
+   */
   const reload = async (): Promise<void> => {
     setRefreshing(true)
     try {
-      await refresh()
+      await Promise.all([refresh(), update.check()])
     } finally {
       setRefreshing(false)
     }
