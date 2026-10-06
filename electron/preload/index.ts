@@ -17,6 +17,7 @@ import type {
   SignInInput,
   TaskCardInput,
   TaskCardMove,
+  TrackingSchedule,
   TranscriptProgress,
   TrayCommand,
   UpdateStatus,
@@ -95,10 +96,15 @@ const api: RecorderApi = {
   tracking: {
     policy: () => ipcRenderer.invoke(IPC.TRACKING_POLICY),
     people: () => ipcRenderer.invoke(IPC.TRACKING_PEOPLE),
-    setPolicy: (userId: string, patch: { trackingEnabled?: boolean; screenshotsEnabled?: boolean }) =>
-      ipcRenderer.invoke(IPC.TRACKING_SET_POLICY, userId, patch),
+    setPolicy: (
+      userId: string,
+      patch: { trackingEnabled?: boolean; screenshotsEnabled?: boolean; appsEnabled?: boolean }
+    ) => ipcRenderer.invoke(IPC.TRACKING_SET_POLICY, userId, patch),
     day: (userId: string, from: string, to: string) =>
-      ipcRenderer.invoke(IPC.TRACKING_DAY, userId, from, to)
+      ipcRenderer.invoke(IPC.TRACKING_DAY, userId, from, to),
+    schedule: () => ipcRenderer.invoke(IPC.TRACKING_SCHEDULE),
+    setSchedule: (patch: Partial<TrackingSchedule>) =>
+      ipcRenderer.invoke(IPC.TRACKING_SET_SCHEDULE, patch)
   },
 
   roster: {

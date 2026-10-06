@@ -2,8 +2,8 @@ import type { GoogleCalendarSyncResult, ScheduledCallRange } from '@shared/types
 import { GOOGLE_CALENDAR_API } from '../config/google'
 import { AppError, ERROR_CODES } from '../lib/errors'
 import { logger } from '../lib/logger'
-import { applyImportedCalls } from './calls'
-import { connectedEmails, getAccessToken } from './google-accounts'
+import { NOT_LINKED, applyImportedCalls } from './calls'
+import { connectedEmails, ensureLinked, getAccessToken } from './google-accounts'
 
 const SCOPE = 'google-calendar'
 
@@ -74,7 +74,7 @@ export async function syncGoogleCalendars(
   for (const email of emails) {
     try {
       const events = await fetchEvents(email, range)
-      const applied = await applyImportedCalls(email, range, events)
+      const applied = await applyWithLink(email, range, events)
 
       result.imported += applied.imported
       result.updated += applied.updated
@@ -95,6 +95,29 @@ export async function syncGoogleCalendars(
   })
 
   return result
+}
+
+/**
+ * Applies the events, linking this person to the calendar first if the server
+ * does not know them yet — an account connected before links existed, or one
+ * whose link was lost. One retry: a second refusal is a real failure.
+ */
+async function applyWithLink(
+  email: string,
+  range: ScheduledCallRange,
+  events: ImportedEvent[]
+): ReturnType<typeof applyImportedCalls> {
+  await ensureLinked(email)
+
+  try {
+    return await applyImportedCalls(email, range, events)
+  } catch (error) {
+    if ((error as { code?: unknown }).code !== NOT_LINKED) throw error
+
+    logger.info(SCOPE, 'Not linked on the server; linking and retrying', { email })
+    await ensureLinked(email, { force: true })
+    return applyImportedCalls(email, range, events)
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -234,7 +257,7 @@ async function describeApiError(response: Response, email: string): Promise<AppE
     return new AppError(
       ERROR_CODES.AUTH_FAILED,
       `Google will not let the app read ${email}'s calendar.`,
-      'Disconnect the account under Calendars and connect it again.'
+      'Disconnect the account under Google Calendar in the account sidebar and connect it again.'
     )
   }
 

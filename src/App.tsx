@@ -30,7 +30,7 @@ type Route = 'recorder' | 'recordings' | 'settings' | 'account'
  *
  * Nothing else about accounts is switched off: an existing session stays signed
  * in, the schedule keeps syncing and reminders keep firing. Only the way in is
- * gone, so while this is `false` the account area — Call Manager and Calendars
+ * gone, so while this is `false` the account area — Calendar and Google Calendar
  * included — cannot be reached. Set it back to `true` to restore the control.
  */
 const SHOW_ACCOUNT_CONTROL = true

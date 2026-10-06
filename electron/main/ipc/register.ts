@@ -31,6 +31,7 @@ import type {
   SignInInput,
   TrackedPerson,
   TrackingPolicy,
+  TrackingSchedule,
   UpdateStatus,
   UserPermission
 } from '@shared/types'
@@ -93,9 +94,15 @@ import {
   listGoogleAccounts
 } from '../services/google-accounts'
 import { syncGoogleCalendars } from '../services/google-calendar'
+import { syncAhead } from '../services/google-sync'
 import { readActivityDay } from '../services/activity-day'
 import { currentPolicy, refreshPolicy } from '../services/tracking-policy'
-import { listTrackedPeople, setTrackingPolicyFor } from '../services/tracked-people'
+import {
+  listTrackedPeople,
+  readTrackingSchedule,
+  setTrackingPolicyFor,
+  setTrackingSchedule
+} from '../services/tracked-people'
 import { refreshReminders } from '../services/reminders'
 import { getStatus as getMcpStatus, regenerateToken as regenerateMcpToken } from '../services/mcp-server'
 import { cancelActiveTranscode } from '../services/transcoder'
@@ -309,6 +316,8 @@ export function registerIpcHandlers(): void {
         // The reminder scheduler started before there was a session to read a
         // schedule with. This is the first moment it can arm anything.
         if (restored) void refreshReminders()
+        // And to catch up on meetings added in Google while the app was closed.
+        if (restored) void syncAhead()
 
         /*
          * And the first moment the tracking policy can be settled either way.
@@ -339,6 +348,8 @@ export function registerIpcHandlers(): void {
       // The schedule only becomes readable now, so this is the first chance to
       // arm anything.
       void refreshReminders()
+      // This person's own connected calendars, not the last person's.
+      void syncAhead()
       // And the first chance to learn what this account is meant to record.
       void refreshPolicy()
       // A different person's profile has not been told their warnings yet.
@@ -384,7 +395,13 @@ export function registerIpcHandlers(): void {
     handled(
       SCOPE,
       (_event: Electron.IpcMainInvokeEvent, reconnecting?: string): Promise<GoogleAccount> =>
-        connectGoogleAccount(typeof reconnecting === 'string' ? reconnecting : undefined)
+        connectGoogleAccount(typeof reconnecting === 'string' ? reconnecting : undefined).then(
+          (account) => {
+            // Its upcoming meetings get reminders without waiting for the timer.
+            void syncAhead()
+            return account
+          }
+        )
     )
   )
 
@@ -398,6 +415,8 @@ export function registerIpcHandlers(): void {
 
       try {
         await deleteCallsFromGoogleAccount(String(email))
+        // Its meetings are gone, so their armed reminders must go too.
+        void refreshReminders()
       } catch (error) {
         logger.warn(SCOPE, 'Imported calls were left behind', { email, error })
       }
@@ -411,7 +430,12 @@ export function registerIpcHandlers(): void {
       (
         _event: Electron.IpcMainInvokeEvent,
         range: ScheduledCallRange
-      ): Promise<GoogleCalendarSyncResult> => syncGoogleCalendars(range)
+      ): Promise<GoogleCalendarSyncResult> =>
+        syncGoogleCalendars(range).then((result) => {
+          // An imported, moved or cancelled meeting changes what to remind about.
+          if (result.imported + result.updated + result.removed > 0) void refreshReminders()
+          return result
+        })
     )
   )
 
@@ -434,7 +458,7 @@ export function registerIpcHandlers(): void {
       async (
         _event: Electron.IpcMainInvokeEvent,
         userId: string,
-        patch: { trackingEnabled?: boolean; screenshotsEnabled?: boolean }
+        patch: { trackingEnabled?: boolean; screenshotsEnabled?: boolean; appsEnabled?: boolean }
       ): Promise<TrackedPerson> => {
         const person = await setTrackingPolicyFor(String(userId), patch)
 
@@ -443,6 +467,27 @@ export function registerIpcHandlers(): void {
         if (currentUser()?.id === person.id) void refreshPolicy()
 
         return person
+      }
+    )
+  )
+
+  ipcMain.handle(
+    IPC.TRACKING_SCHEDULE,
+    handled(SCOPE, (): Promise<TrackingSchedule> => readTrackingSchedule())
+  )
+
+  ipcMain.handle(
+    IPC.TRACKING_SET_SCHEDULE,
+    handled(
+      SCOPE,
+      async (
+        _event: Electron.IpcMainInvokeEvent,
+        patch: Partial<TrackingSchedule>
+      ): Promise<TrackingSchedule> => {
+        const schedule = await setTrackingSchedule(patch ?? {})
+        // This machine is tracked on the same schedule; no need to wait for the poll.
+        void refreshPolicy()
+        return schedule
       }
     )
   )

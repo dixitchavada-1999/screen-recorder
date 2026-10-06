@@ -68,7 +68,7 @@ export function TrackingConsentDialog({
     >
       <div className="flex flex-col gap-4 text-sm leading-relaxed text-muted">
         <Item label="What is recorded">
-          Whether this machine is being used. Every minute the app checks how long it has been
+          Whether this machine is being used. Every few seconds the app checks how long it has been
           since the keyboard or mouse was touched, and stores that as stretches of{' '}
           <span className="text-ink">active</span> and <span className="text-ink">idle</span>{' '}
           time. It does not record what you type.
@@ -79,6 +79,13 @@ export function TrackingConsentDialog({
           on — including while it is idle. Screenshots are only taken if an administrator has
           switched them on for your account; if they have not, the app records activity and no
           images at all. Settings always shows which of the two is running.
+        </Item>
+
+        <Item label="Applications">
+          If an administrator has switched it on for your account, which application is in front
+          and the title of its window — in a browser that is the page title — while you are at
+          the keyboard. Not what you type, not the contents of a page, and not the titles of
+          private or incognito windows.
         </Item>
 
         <Item label="When it runs">
@@ -104,8 +111,8 @@ export function TrackingConsentDialog({
 
         <p className="rounded-xl border border-hairline bg-surface px-3 py-2.5 text-xs">
           Idle means {idleMinutes} {idleMinutes === 1 ? 'minute' : 'minutes'} without keyboard or
-          mouse. Both this and the screenshot interval are shown, and can be changed, in
-          Settings.
+          mouse. Both this and the screenshot interval are set by your administrator for
+          everyone tracked.
         </p>
       </div>
     </Modal>

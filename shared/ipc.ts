@@ -52,6 +52,9 @@ export const IPC = {
   TRACKING_SET_POLICY: 'tracking:set-policy',
   /** One person's recorded day, for the admin panel. */
   TRACKING_DAY: 'tracking:day',
+  /** The organisation-wide screenshot interval and idle threshold. */
+  TRACKING_SCHEDULE: 'tracking:schedule',
+  TRACKING_SET_SCHEDULE: 'tracking:set-schedule',
 
   /* Call manager */
   /** The people a call can be scheduled for — this app's cache of the roster. */

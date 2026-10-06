@@ -46,8 +46,6 @@ export function isGoogleConfigured(): boolean {
 
 export const GOOGLE_AUTH_ENDPOINT = 'https://accounts.google.com/o/oauth2/v2/auth'
 export const GOOGLE_TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token'
-/** Revokes a refresh token, so disconnecting inside the app really disconnects. */
-export const GOOGLE_REVOKE_ENDPOINT = 'https://oauth2.googleapis.com/revoke'
 export const GOOGLE_CALENDAR_API = 'https://www.googleapis.com/calendar/v3'
 
 /**

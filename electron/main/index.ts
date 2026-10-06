@@ -3,6 +3,7 @@ import { IPC } from '@shared/ipc'
 import { registerIpcHandlers } from './ipc/register'
 import { logger } from './lib/logger'
 import { initActivityTracker, stopActivityTracker } from './services/activity-tracker'
+import { initAppTracker, stopAppTracker } from './services/app-tracker'
 import { startActivityUpload, stopActivityUpload } from './services/activity-upload'
 import { startClockWatchdog, stopClockWatchdog } from './services/clock-watchdog'
 import { initInputCounter, stopInputCounter } from './services/input-counter'
@@ -20,6 +21,7 @@ import {
   listOrphanRecordings
 } from './services/recording-session'
 import { startReminderPrefs } from './services/reminder-prefs'
+import { startGoogleSync } from './services/google-sync'
 import { startReminders, stopReminders } from './services/reminders'
 import { initUpdater, stopUpdater } from './services/updater'
 import { startRosterSync, stopRosterSync } from './services/roster'
@@ -186,6 +188,10 @@ async function onReady(): Promise<void> {
   // to arm and tries again once a session exists.
   startReminders()
 
+  // Keeps the weeks ahead in step with the connected Google calendars, so a
+  // meeting added there gets its reminder even while the app sits in the tray.
+  startGoogleSync()
+
   // Looks for a newer version, and keeps looking every few hours. Finding one
   // only lights up the banner on the dashboard - nothing downloads or installs
   // until somebody asks it to.
@@ -225,6 +231,10 @@ async function onReady(): Promise<void> {
   // Counts what happened in each window. Same switch, same interval — one
   // picture and one set of numbers describing the same ten minutes.
   initInputCounter()
+
+  // Which application is in front. Its own switch, off unless an administrator
+  // turns it on for this person.
+  initAppTracker()
 
   // Drains what those two write. Runs whether or not tracking is on: a policy
   // switched off mid-day still leaves a queue that belongs on the server.
@@ -338,6 +348,7 @@ async function finishShutdown(): Promise<void> {
     // so the hours until the next boot belong to nobody.
     await stopActivityTracker()
     await stopInputCounter()
+    await stopAppTracker()
     stopScreenshotScheduler()
     stopAccountWatch()
     releaseShortcuts()

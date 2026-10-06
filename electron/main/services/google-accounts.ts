@@ -1,6 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
 import { createServer, type Server } from 'node:http'
-import { readFile, unlink, writeFile } from 'node:fs/promises'
+import { readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { app, safeStorage, shell } from 'electron'
 import type { GoogleAccount } from '@shared/types'
@@ -12,7 +12,6 @@ import {
   GOOGLE_CLIENT_SECRET,
   GOOGLE_REDIRECT_HOST,
   GOOGLE_REDIRECT_PATH,
-  GOOGLE_REVOKE_ENDPOINT,
   GOOGLE_SCOPES,
   GOOGLE_TOKEN_ENDPOINT,
   accountColor,
@@ -20,7 +19,9 @@ import {
 } from '../config/google'
 import { AppError, ERROR_CODES } from '../lib/errors'
 import { logger } from '../lib/logger'
-import { showMainWindow } from '../window'
+import { SUPABASE_URL } from '../config/supabase'
+import { currentUser, getSupabase } from './auth'
+import { openMainWindowSection, showMainWindow } from '../window'
 
 const SCOPE = 'google-accounts'
 
@@ -41,8 +42,18 @@ const SCOPE = 'google-accounts'
  * the granted scope does not allow it.
  */
 
-/** Encrypted JSON array of `StoredAccount`. Not readable without the keychain. */
-const ACCOUNTS_FILE = 'google-accounts.bin'
+/**
+ * Encrypted JSON array of `StoredAccount`, one file per signed-in user. Not
+ * readable without the keychain.
+ *
+ * Per user because the connections belong to the person, not the machine: with
+ * one shared file, whoever signed in next on the same computer had the previous
+ * person's calendars imported into their own schedule.
+ */
+const accountsFile = (userId: string): string => `google-accounts-${userId}.bin`
+
+/** The single file older builds wrote, adopted by the first user to load. */
+const LEGACY_ACCOUNTS_FILE = 'google-accounts.bin'
 
 interface StoredAccount {
   email: string
@@ -58,6 +69,9 @@ interface StoredAccount {
  */
 let accounts: StoredAccount[] | null = null
 
+/** Whose accounts `accounts` holds, so a different sign-in reloads rather than reuses them. */
+let accountsOwner: string | null = null
+
 /** Short-lived access tokens, kept in memory only. */
 const accessTokens = new Map<string, { token: string; expiresAt: number }>()
 
@@ -71,11 +85,19 @@ const accessTokens = new Map<string, { token: string; expiresAt: number }>()
  */
 const expired = new Set<string>()
 
+/**
+ * Accounts already linked on the server this session.
+ *
+ * Linking is idempotent, so this only saves the round trip; it is cleared with
+ * everything else when a different person signs in.
+ */
+const linked = new Set<string>()
+
 /** One consent flow at a time; two would fight over the browser and the store. */
 let connecting = false
 
-function accountsPath(): string {
-  return join(app.getPath('userData'), ACCOUNTS_FILE)
+function accountsPath(userId: string): string {
+  return join(app.getPath('userData'), accountsFile(userId))
 }
 
 /* -------------------------------------------------------------------------- */
@@ -83,7 +105,18 @@ function accountsPath(): string {
 /* -------------------------------------------------------------------------- */
 
 async function load(): Promise<StoredAccount[]> {
-  if (accounts) return accounts
+  // Nobody signed in has no calendars — and must not see the last person's.
+  const user = currentUser()
+  if (!user) return []
+
+  if (accounts && accountsOwner === user.id) return accounts
+
+  // A different person: nothing cached for the previous one may carry over.
+  accounts = null
+  accountsOwner = user.id
+  accessTokens.clear()
+  expired.clear()
+  linked.clear()
 
   if (!safeStorage.isEncryptionAvailable()) {
     logger.warn(SCOPE, 'No OS keychain available; connected accounts will not persist')
@@ -91,8 +124,10 @@ async function load(): Promise<StoredAccount[]> {
     return accounts
   }
 
+  await adoptLegacyFile(user.id)
+
   try {
-    const encrypted = await readFile(accountsPath())
+    const encrypted = await readFile(accountsPath(user.id))
     const parsed: unknown = JSON.parse(safeStorage.decryptString(encrypted))
     accounts = Array.isArray(parsed) ? (parsed as StoredAccount[]) : []
   } catch (error) {
@@ -107,17 +142,37 @@ async function load(): Promise<StoredAccount[]> {
   return accounts
 }
 
+/**
+ * Moves the shared file older builds wrote into this user's name.
+ *
+ * Whoever loads first after the update is, in practice, whoever connected
+ * those accounts — this machine's usual user. Renamed rather than copied, so a
+ * second person signing in later starts with nothing.
+ */
+async function adoptLegacyFile(userId: string): Promise<void> {
+  const legacy = join(app.getPath('userData'), LEGACY_ACCOUNTS_FILE)
+  try {
+    await rename(legacy, accountsPath(userId))
+    logger.info(SCOPE, 'Adopted the shared Google accounts file for this user')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      logger.warn(SCOPE, 'Could not adopt the shared Google accounts file', error)
+    }
+  }
+}
+
 async function save(): Promise<void> {
   const current = accounts ?? []
+  const owner = accountsOwner
 
-  if (!safeStorage.isEncryptionAvailable()) return
+  if (!owner || !safeStorage.isEncryptionAvailable()) return
 
   try {
     if (current.length === 0) {
-      await unlink(accountsPath()).catch(() => undefined)
+      await unlink(accountsPath(owner)).catch(() => undefined)
       return
     }
-    await writeFile(accountsPath(), safeStorage.encryptString(JSON.stringify(current)))
+    await writeFile(accountsPath(owner), safeStorage.encryptString(JSON.stringify(current)))
   } catch (error) {
     logger.warn(SCOPE, 'Could not store connected Google accounts', error)
   }
@@ -144,6 +199,73 @@ export async function connectedEmails(): Promise<string[]> {
 }
 
 /**
+ * Makes sure the server has this person linked to a calendar they hold a token for.
+ *
+ * Needed for accounts connected before links existed, and after a link was lost
+ * — the sync asks for it when the server says "not linked", then tries again.
+ */
+export async function ensureLinked(email: string, options: { force?: boolean } = {}): Promise<void> {
+  if (linked.has(email) && !options.force) return
+  await linkOnServer(email, await getAccessToken(email))
+}
+
+/**
+ * Asks the `google-link` function to link the signed-in person to this calendar.
+ *
+ * The function checks the token with Google itself — issued to this app, and
+ * opening this address's calendar — so the link cannot be claimed for an
+ * address somebody merely typed.
+ */
+async function linkOnServer(email: string, accessToken: string): Promise<void> {
+  const { data } = await getSupabase().auth.getSession()
+  const session = data.session?.access_token
+
+  if (!session) {
+    throw new AppError(
+      ERROR_CODES.AUTH_FAILED,
+      'Sign in before connecting a Google account.',
+      'Connected calendars are kept with your account.'
+    )
+  }
+
+  let response: Response
+  try {
+    response = await fetch(`${SUPABASE_URL}/functions/v1/google-link`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${session}` },
+      body: JSON.stringify({ google_token: accessToken })
+    })
+  } catch (error) {
+    logger.warn(SCOPE, 'Could not reach the link service', error)
+    throw new AppError(
+      ERROR_CODES.UNKNOWN,
+      'The calendar could not be linked to your account.',
+      'Check the internet connection and try again.'
+    )
+  }
+
+  const payload = (await response.json().catch(() => ({}))) as {
+    ok?: boolean
+    email?: string
+    error?: string
+  }
+
+  if (!response.ok || payload.ok !== true) {
+    logger.warn(SCOPE, 'The link service refused', { email, status: response.status, ...payload })
+    throw new AppError(
+      ERROR_CODES.AUTH_FAILED,
+      'The calendar could not be linked to your account.',
+      payload.error === 'missing_calendar_scope'
+        ? 'Connect again and tick "See and download any calendar…" on the Google consent screen.'
+        : `The server said: ${payload.error ?? `HTTP ${response.status}`}.`
+    )
+  }
+
+  linked.add(email)
+  logger.info(SCOPE, 'Google account linked on the server', { email })
+}
+
+/**
  * Runs the consent flow and stores the resulting account.
  *
  * Reconnecting an address that is already present replaces its token rather
@@ -152,6 +274,16 @@ export async function connectedEmails(): Promise<string[]> {
  */
 export async function connectGoogleAccount(reconnecting?: string): Promise<GoogleAccount> {
   requireConfigured()
+
+  // The connection is stored under the signed-in person; with nobody signed in
+  // it would have nowhere to go and would silently vanish.
+  if (!currentUser()) {
+    throw new AppError(
+      ERROR_CODES.AUTH_FAILED,
+      'Sign in before connecting a Google account.',
+      'Connected calendars are kept with your account.'
+    )
+  }
 
   if (connecting) {
     throw new AppError(
@@ -164,6 +296,10 @@ export async function connectGoogleAccount(reconnecting?: string): Promise<Googl
   connecting = true
   try {
     const { refreshToken, accessToken, email } = await runConsentFlow(reconnecting)
+
+    // Before anything is stored: an account the server will not link could
+    // never sync, and keeping it would only produce a failure on every refresh.
+    await linkOnServer(email, accessToken)
 
     // Whatever was wrong with the old grant, this is a new one.
     expired.delete(email)
@@ -185,6 +321,10 @@ export async function connectGoogleAccount(reconnecting?: string): Promise<Googl
     // sync an immediate refresh round trip.
     cacheAccessToken(email, accessToken, 3600)
 
+    // Back to the Google Calendar screen, now that the account is saved — a
+    // screen opened any earlier could list the accounts without this one.
+    openMainWindowSection('calendars')
+
     const index = stored.findIndex((account) => account.email === email)
     return {
       email,
@@ -198,30 +338,27 @@ export async function connectGoogleAccount(reconnecting?: string): Promise<Googl
 }
 
 /**
- * Forgets an account and tells Google to invalidate the grant.
+ * Forgets an account on this machine, for the signed-in person only.
  *
- * Revocation is attempted but not required to succeed: if the token is already
- * dead, or the machine is offline, forgetting it locally is still the right
- * outcome — the alternative is an account the user cannot get rid of.
+ * Deliberately does not revoke the token with Google. Revocation ends the whole
+ * grant this app holds for that Google account — and one Google account is
+ * routinely connected by several people (a shared team calendar, the same
+ * address on two teammates' machines). Revoking here would silently cut every
+ * one of them off, and their calendars would start failing with "expired".
+ *
+ * The token is deleted from this machine, so nothing here can use it again.
+ * Somebody who wants the grant gone everywhere removes the app at
+ * myaccount.google.com/permissions.
  */
 export async function disconnectGoogleAccount(email: string): Promise<void> {
   const stored = await load()
   const index = stored.findIndex((account) => account.email === email)
   if (index < 0) return
 
-  const [removed] = stored.splice(index, 1)
+  stored.splice(index, 1)
   accessTokens.delete(email)
+  expired.delete(email)
   await save()
-
-  try {
-    await fetch(GOOGLE_REVOKE_ENDPOINT, {
-      method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ token: removed!.refreshToken })
-    })
-  } catch (error) {
-    logger.warn(SCOPE, 'Could not revoke the Google token', { email, error })
-  }
 
   logger.info(SCOPE, 'Google account disconnected', { email })
 }
@@ -269,7 +406,7 @@ export async function getAccessToken(email: string): Promise<string> {
      *
      * There is nothing to retry with: the refresh token *is* the credential,
      * and Google only issues another one to a browser the user is sitting in
-     * front of. Recording it here is what lets the Calendars list show the
+     * front of. Recording it here is what lets the Google Calendar list show the
      * account as needing attention instead of the app quietly not syncing.
      */
     expired.add(email)
@@ -277,7 +414,7 @@ export async function getAccessToken(email: string): Promise<string> {
     throw new AppError(
       ERROR_CODES.AUTH_FAILED,
       `Google access for ${email} has expired.`,
-      'Open Calendars and press Reconnect — it takes one click.'
+      'Open Google Calendar in the account sidebar and press Reconnect — it takes one click.'
     )
   }
 
@@ -585,7 +722,8 @@ async function readAccountEmail(accessToken: string): Promise<string> {
     throw new AppError(ERROR_CODES.AUTH_FAILED, 'Google did not name the connected calendar.')
   }
 
-  return email
+  // Lower case, as the server stores it: one address must be one calendar.
+  return email.trim().toLowerCase()
 }
 
 /* -------------------------------------------------------------------------- */

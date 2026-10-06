@@ -7,7 +7,6 @@ import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { Select, Toggle } from '@/components/ui/Controls'
 import { useAuth } from '@/context/AuthContext'
-import { useSettings } from '@/context/SettingsContext'
 import { useToast } from '@/context/ToastContext'
 import { useRoles } from '@/hooks/useRoles'
 import { useTrackedPeople } from '@/hooks/useTrackedPeople'
@@ -31,7 +30,6 @@ export function UserActivity(): React.JSX.Element {
   const [policyOpen, setPolicyOpen] = useState(false)
   const [changingRole, setChangingRole] = useState<string | null>(null)
   const [permissionsFor, setPermissionsFor] = useState<TrackedPerson | null>(null)
-  const { settings, updateSettings } = useSettings()
   const { user, can } = useAuth()
   const { push } = useToast()
 
@@ -75,7 +73,7 @@ export function UserActivity(): React.JSX.Element {
 
   const change = async (
     person: TrackedPerson,
-    patch: { trackingEnabled?: boolean; screenshotsEnabled?: boolean },
+    patch: { trackingEnabled?: boolean; screenshotsEnabled?: boolean; appsEnabled?: boolean },
     what: string
   ): Promise<void> => {
     try {
@@ -95,7 +93,7 @@ export function UserActivity(): React.JSX.Element {
     <div className="flex flex-col gap-4">
       <Card
         title="User activity"
-        description="Who is tracked, and what their day looked like. Switching these writes to the person's account — their machine picks it up within a couple of minutes."
+        description="Who is tracked, and what their day looked like. Switching these writes to the person's account — their machine picks it up within a couple of minutes. Apps records the application in front and its window title, never what is typed."
         actions={
           <Button size="sm" variant="ghost" onClick={() => setPolicyOpen(true)}>
             Tracking settings
@@ -166,6 +164,21 @@ export function UserActivity(): React.JSX.Element {
                     }
                   />
 
+                  {/* The application in front and its window title. Hangs off
+                      tracking the same way screenshots do. */}
+                  <Toggle
+                    label="Apps"
+                    checked={person.appsEnabled}
+                    disabled={busy === person.id || !person.trackingEnabled || !managesTracking}
+                    onCheckedChange={(appsEnabled) =>
+                      void change(
+                        person,
+                        { appsEnabled },
+                        appsEnabled ? 'Application tracking on' : 'Application tracking off'
+                      )
+                    }
+                  />
+
                   {/*
                     Their own row has no picker. A super admin who could demote
                     themselves is one mis-click from a system nobody can
@@ -215,14 +228,11 @@ export function UserActivity(): React.JSX.Element {
 
       <UserPermissionsDialog person={permissionsFor} onClose={() => setPermissionsFor(null)} />
 
-      {settings && (
-        <TrackingPolicyDialog
-          open={policyOpen}
-          settings={settings}
-          onUpdate={updateSettings}
-          onClose={() => setPolicyOpen(false)}
-        />
-      )}
+      <TrackingPolicyDialog
+        open={policyOpen}
+        canManage={managesTracking}
+        onClose={() => setPolicyOpen(false)}
+      />
     </div>
   )
 }

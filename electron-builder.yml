@@ -13,6 +13,63 @@ files:
   - '!**/*.map'
   - '!**/node_modules/*/{test,__tests__,tests,example,examples,doc,docs}/**'
   - '!**/node_modules/*/*.md'
+  # `get-windows` brings a toolchain for compiling its binary from source —
+  # node-gyp, node-pre-gyp and everything they pull in. The prebuilt binary is
+  # loaded directly (see app-tracker.ts), so none of it ever runs; it is left
+  # out of the installer rather than shipped as dead weight.
+  - '!node_modules/get-windows/node_modules/**'
+  - '!node_modules/get-windows/{Sources/**,binding.gyp}'
+  - '!node_modules/get-windows/lib/binding/napi-6-*/**'
+  - '!node_modules/@isaacs/cliui/**'
+  - '!node_modules/@mapbox/node-pre-gyp/**'
+  - '!node_modules/@npmcli/agent/**'
+  - '!node_modules/@npmcli/fs/**'
+  - '!node_modules/@pkgjs/parseargs/**'
+  - '!node_modules/aggregate-error/**'
+  - '!node_modules/aproba/**'
+  - '!node_modules/are-we-there-yet/**'
+  - '!node_modules/cacache/**'
+  - '!node_modules/clean-stack/**'
+  - '!node_modules/color-support/**'
+  - '!node_modules/console-control-strings/**'
+  - '!node_modules/delegates/**'
+  - '!node_modules/eastasianwidth/**'
+  - '!node_modules/encoding/**'
+  - '!node_modules/foreground-child/**'
+  - '!node_modules/fs-minipass/**'
+  - '!node_modules/gauge/**'
+  - '!node_modules/has-unicode/**'
+  - '!node_modules/imurmurhash/**'
+  - '!node_modules/indent-string/**'
+  - '!node_modules/is-lambda/**'
+  - '!node_modules/jackspeak/**'
+  - '!node_modules/make-dir/**'
+  - '!node_modules/make-fetch-happen/**'
+  - '!node_modules/minipass-collect/**'
+  - '!node_modules/minipass-fetch/**'
+  - '!node_modules/minipass-flush/**'
+  - '!node_modules/minipass-pipeline/**'
+  - '!node_modules/minipass-sized/**'
+  - '!node_modules/node-addon-api/**'
+  - '!node_modules/node-fetch/**'
+  - '!node_modules/npmlog/**'
+  - '!node_modules/p-map/**'
+  - '!node_modules/package-json-from-dist/**'
+  - '!node_modules/path-scurry/**'
+  - '!node_modules/set-blocking/**'
+  - '!node_modules/smart-buffer/**'
+  - '!node_modules/socks/**'
+  - '!node_modules/socks-proxy-agent/**'
+  - '!node_modules/ssri/**'
+  - '!node_modules/string-width-cjs/**'
+  - '!node_modules/strip-ansi-cjs/**'
+  - '!node_modules/tr46/**'
+  - '!node_modules/unique-filename/**'
+  - '!node_modules/unique-slug/**'
+  - '!node_modules/webidl-conversions/**'
+  - '!node_modules/whatwg-url/**'
+  - '!node_modules/wide-align/**'
+  - '!node_modules/wrap-ansi-cjs/**'
 
 asar: true
 
@@ -31,6 +88,9 @@ asarUnpack:
   # `uiohook-napi` ships a `.node` binary, and the dynamic loader cannot open one
   # from inside an asar archive any more than it can spawn an executable there.
   - node_modules/uiohook-napi/**
+  # The window-reading binary (Windows) and helper executable (macOS) for
+  # application tracking; same reason as above.
+  - node_modules/get-windows/**
 
 # An `ffmpeg/` folder placed beside the executable overrides the bundled binary.
 extraResources:

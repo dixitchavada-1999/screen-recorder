@@ -41,6 +41,7 @@ import type {
   TaskPerson,
   TrackedPerson,
   TrackingPolicy,
+  TrackingSchedule,
   Transcript,
   TranscriptProgress,
   TrayCommand,
@@ -196,10 +197,13 @@ export interface RecorderApi {
     people(): Promise<IpcResult<TrackedPerson[]>>
     setPolicy(
       userId: string,
-      patch: { trackingEnabled?: boolean; screenshotsEnabled?: boolean }
+      patch: { trackingEnabled?: boolean; screenshotsEnabled?: boolean; appsEnabled?: boolean }
     ): Promise<IpcResult<TrackedPerson>>
     /** Segments and captures for one person between two instants. */
     day(userId: string, from: string, to: string): Promise<IpcResult<ActivityDay>>
+    /** The schedule every tracked machine runs on, from the server. */
+    schedule(): Promise<IpcResult<TrackingSchedule>>
+    setSchedule(patch: Partial<TrackingSchedule>): Promise<IpcResult<TrackingSchedule>>
   }
 
   /** The Call Manager's schedule, stored with the account. Requires sign-in. */

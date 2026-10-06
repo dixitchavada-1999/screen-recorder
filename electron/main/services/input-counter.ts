@@ -4,7 +4,6 @@ import { join } from 'node:path'
 import { logger } from '../lib/logger'
 import type { ClockGap } from './clock-watchdog'
 import { clockWatchdog } from './clock-watchdog'
-import { settingsStore } from './settings-store'
 import { currentPolicy, trackingPolicy } from './tracking-policy'
 
 const SCOPE = 'input-counter'
@@ -43,6 +42,8 @@ let counters = zero()
 let windowStartedAt = 0
 
 let flushTimer: NodeJS.Timeout | null = null
+/** The window length the flush timer was started with, to notice the schedule changing. */
+let runningEveryMs = 0
 let activeTimer: NodeJS.Timeout | null = null
 let hooked = false
 
@@ -61,7 +62,6 @@ let available: boolean | null = null
 
 export function initInputCounter(): void {
   trackingPolicy.on('changed', () => reconcile())
-  settingsStore.on('changed', () => reconcile())
   reconcile()
 
   /*
@@ -102,10 +102,19 @@ export async function stopInputCounter(): Promise<void> {
 }
 
 function reconcile(): void {
-  const wanted = currentPolicy().trackingEnabled
+  const policy = currentPolicy()
+  const wanted = policy.trackingEnabled
 
   if (wanted && flushTimer === null) start()
-  else if (!wanted && flushTimer !== null) {
+  else if (wanted && runningEveryMs !== policy.screenshotIntervalMinutes * 60_000) {
+    // The schedule changed: close the window at its real length and start the
+    // next one on the new boundary, so windows keep lining up with screenshots.
+    void flush()
+    restartTimers()
+    logger.info(SCOPE, 'Input window length changed', {
+      everyMinutes: policy.screenshotIntervalMinutes
+    })
+  } else if (!wanted && flushTimer !== null) {
     void flush()
     stop()
     logger.info(SCOPE, 'Input counting stopped')
@@ -121,7 +130,7 @@ function start(): void {
   restartTimers()
 
   logger.info(SCOPE, 'Input counting started', {
-    everyMinutes: settingsStore.get().tracking.screenshotIntervalMinutes,
+    everyMinutes: currentPolicy().screenshotIntervalMinutes,
     available
   })
 }
@@ -135,9 +144,10 @@ function stop(): void {
 function restartTimers(): void {
   clearTimers()
 
-  const { tracking } = settingsStore.get()
+  const everyMs = currentPolicy().screenshotIntervalMinutes * 60_000
 
-  flushTimer = setInterval(() => void flush(), tracking.screenshotIntervalMinutes * 60_000)
+  flushTimer = setInterval(() => void flush(), everyMs)
+  runningEveryMs = everyMs
   activeTimer = setInterval(sampleActive, ACTIVE_SAMPLE_MS)
 }
 
@@ -263,8 +273,7 @@ function countScroll(): void {
  * same thing in both places rather than two definitions that drift.
  */
 function sampleActive(): void {
-  const { tracking } = settingsStore.get()
-  if (powerMonitor.getSystemIdleTime() >= tracking.idleAfterSeconds) return
+  if (powerMonitor.getSystemIdleTime() >= currentPolicy().idleAfterSeconds) return
   counters.activeSeconds += ACTIVE_SAMPLE_MS / 1000
 }
 

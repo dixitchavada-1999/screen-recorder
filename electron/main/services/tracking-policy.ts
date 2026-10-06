@@ -49,8 +49,42 @@ const REFRESH_INTERVAL_MS = 2 * 60 * 1000
  */
 const CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
 
+/**
+ * The schedule used until the server has said what it is. The same numbers the
+ * server's own row starts with.
+ */
+const DEFAULT_INTERVAL_MINUTES = 10
+const DEFAULT_IDLE_SECONDS = 300
+
 /** Nothing is recorded until the server says otherwise. */
-const OFF: TrackingPolicy = { trackingEnabled: false, screenshotsEnabled: false }
+const OFF: TrackingPolicy = {
+  trackingEnabled: false,
+  screenshotsEnabled: false,
+  appsEnabled: false,
+  screenshotIntervalMinutes: DEFAULT_INTERVAL_MINUTES,
+  idleAfterSeconds: DEFAULT_IDLE_SECONDS
+}
+
+/**
+ * The schedule within the bounds the server enforces, with the defaults in
+ * place of anything missing — an older server answers without these fields.
+ */
+function schedule(raw: { interval?: unknown; idle?: unknown }): {
+  screenshotIntervalMinutes: number
+  idleAfterSeconds: number
+} {
+  const interval = Number(raw.interval)
+  const idle = Number(raw.idle)
+
+  return {
+    screenshotIntervalMinutes:
+      Number.isFinite(interval) && interval >= 1 && interval <= 240
+        ? Math.round(interval)
+        : DEFAULT_INTERVAL_MINUTES,
+    idleAfterSeconds:
+      Number.isFinite(idle) && idle >= 30 && idle <= 3600 ? Math.round(idle) : DEFAULT_IDLE_SECONDS
+  }
+}
 
 let current: TrackingPolicy = OFF
 let timer: NodeJS.Timeout | null = null
@@ -117,7 +151,10 @@ export async function refreshPolicy(): Promise<void> {
 
   const changed =
     next.trackingEnabled !== current.trackingEnabled ||
-    next.screenshotsEnabled !== current.screenshotsEnabled
+    next.screenshotsEnabled !== current.screenshotsEnabled ||
+    next.appsEnabled !== current.appsEnabled ||
+    next.screenshotIntervalMinutes !== current.screenshotIntervalMinutes ||
+    next.idleAfterSeconds !== current.idleAfterSeconds
 
   current = next
   if (!changed) return
@@ -166,10 +203,7 @@ async function read(): Promise<TrackingPolicy> {
       })
     }
 
-    return {
-      trackingEnabled: remembered.trackingEnabled,
-      screenshotsEnabled: remembered.screenshotsEnabled
-    }
+    return withoutOwner(remembered)
   }
 
   try {
@@ -191,6 +225,9 @@ async function read(): Promise<TrackingPolicy> {
       active?: boolean
       tracking_enabled?: boolean | null
       screenshots_enabled?: boolean | null
+      apps_enabled?: boolean | null
+      screenshot_interval_minutes?: number | null
+      idle_after_seconds?: number | null
     }
 
     if (row.active === false) {
@@ -212,7 +249,9 @@ async function read(): Promise<TrackingPolicy> {
       // Screenshots without tracking is not a state that means anything: the
       // schedule they hang off is not running. Folding it in here keeps every
       // caller from having to remember that.
-      screenshotsEnabled: trackingEnabled && row.screenshots_enabled === true
+      screenshotsEnabled: trackingEnabled && row.screenshots_enabled === true,
+      appsEnabled: trackingEnabled && row.apps_enabled === true,
+      ...schedule({ interval: row.screenshot_interval_minutes, idle: row.idle_after_seconds })
     }
 
     confirmed = true
@@ -258,10 +297,18 @@ async function read(): Promise<TrackingPolicy> {
 
     if (!usable) return OFF
 
-    return {
-      trackingEnabled: remembered.trackingEnabled,
-      screenshotsEnabled: remembered.screenshotsEnabled
-    }
+    return withoutOwner(remembered)
+  }
+}
+
+/** A remembered answer, minus the bookkeeping kept beside it on disk. */
+function withoutOwner(remembered: CachedPolicy): TrackingPolicy {
+  return {
+    trackingEnabled: remembered.trackingEnabled,
+    screenshotsEnabled: remembered.screenshotsEnabled,
+    appsEnabled: remembered.appsEnabled,
+    screenshotIntervalMinutes: remembered.screenshotIntervalMinutes,
+    idleAfterSeconds: remembered.idleAfterSeconds
   }
 }
 
@@ -328,7 +375,10 @@ async function readCache(): Promise<CachedPolicy | null> {
       userId: cached.userId,
       savedAt: cached.savedAt,
       trackingEnabled,
-      screenshotsEnabled: trackingEnabled && cached.screenshotsEnabled === true
+      screenshotsEnabled: trackingEnabled && cached.screenshotsEnabled === true,
+      // Absent from a file written by an older build, which never recorded them.
+      appsEnabled: trackingEnabled && cached.appsEnabled === true,
+      ...schedule({ interval: cached.screenshotIntervalMinutes, idle: cached.idleAfterSeconds })
     }
   } catch {
     // Never written, or unreadable. Both mean there is nothing to remember.

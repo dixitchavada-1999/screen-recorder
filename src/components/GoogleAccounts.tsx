@@ -98,7 +98,8 @@ export function GoogleAccounts({ configured }: GoogleAccountsProps): React.JSX.E
       push({
         tone: 'info',
         title: `${email} disconnected`,
-        description: 'The calls imported from it have been removed.'
+        // Its meetings stay for anybody else who has connected the same calendar.
+        description: 'You have been taken off the meetings imported from it.'
       })
     } catch (caught) {
       push({ tone: 'error', title: toSerializedError(caught).message })

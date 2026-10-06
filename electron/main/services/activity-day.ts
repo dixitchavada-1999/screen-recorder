@@ -2,7 +2,8 @@ import type {
   ActivityDay,
   ActivityInterval,
   ActivitySegment,
-  ActivityScreenshot
+  ActivityScreenshot,
+  AppUsageSummary
 } from '@shared/types'
 import { AppError, ERROR_CODES } from '../lib/errors'
 import { logger } from '../lib/logger'
@@ -37,10 +38,11 @@ export async function readActivityDay(
     throw new AppError(ERROR_CODES.AUTH_FAILED, 'Sign in to read activity.')
   }
 
-  const [segments, screenshots, intervals] = await Promise.all([
+  const [segments, screenshots, intervals, apps] = await Promise.all([
     readSegments(userId, from, to),
     readScreenshots(userId, from, to),
-    readIntervals(userId, from, to)
+    readIntervals(userId, from, to),
+    readApps(userId, from, to)
   ])
 
   const total = (state: ActivitySegment['state']): number =>
@@ -76,8 +78,72 @@ export async function readActivityDay(
     // Capped at 100: the active clock is sampled every few seconds, so rounding
     // at the edges can otherwise put a fully-worked window a point over.
     activePercent:
-      trackedMs > 0 ? Math.min(100, Math.round((activeSeconds * 1000 * 100) / trackedMs)) : null
+      trackedMs > 0 ? Math.min(100, Math.round((activeSeconds * 1000 * 100) / trackedMs)) : null,
+    apps
   }
+}
+
+/** Window titles shown per application in the day's summary. */
+const TITLES_PER_APP = 8
+
+/**
+ * The day's applications, totalled.
+ *
+ * Stretches are summed per application, and their titles merged the same way,
+ * so the answer reads as "four hours in Chrome, mostly these pages" rather than
+ * as the hundred stretches it was recorded in.
+ *
+ * A server without the table yet answers with nothing rather than failing the
+ * whole day: the timeline is still worth showing.
+ */
+async function readApps(userId: string, from: string, to: string): Promise<AppUsageSummary[]> {
+  const { data, error } = await getSupabase()
+    .from('app_usage')
+    .select('started_at, ended_at, app_name, titles')
+    .eq('user_id', userId)
+    .gte('started_at', from)
+    .lt('started_at', to)
+    .order('started_at')
+
+  if (error) {
+    if (error.code === 'PGRST205' || error.code === '42P01') return []
+    throw translate(error, 'read the applications')
+  }
+
+  const byApp = new Map<string, { ms: number; titles: Map<string, number> }>()
+
+  for (const row of data as unknown as Array<{
+    started_at: string
+    ended_at: string
+    app_name: string
+    titles: Array<{ title?: unknown; seconds?: unknown }> | null
+  }>) {
+    const span = Date.parse(row.ended_at) - Date.parse(row.started_at)
+    if (!(span > 0)) continue
+
+    const entry = byApp.get(row.app_name) ?? { ms: 0, titles: new Map<string, number>() }
+    entry.ms += span
+
+    for (const item of row.titles ?? []) {
+      const title = typeof item.title === 'string' ? item.title : ''
+      const seconds = Number(item.seconds)
+      if (!title || !Number.isFinite(seconds) || seconds <= 0) continue
+      entry.titles.set(title, (entry.titles.get(title) ?? 0) + seconds)
+    }
+
+    byApp.set(row.app_name, entry)
+  }
+
+  return [...byApp.entries()]
+    .map(([name, entry]) => ({
+      name,
+      ms: entry.ms,
+      titles: [...entry.titles.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, TITLES_PER_APP)
+        .map(([title, seconds]) => ({ title, seconds: Math.round(seconds) }))
+    }))
+    .sort((a, b) => b.ms - a.ms)
 }
 
 async function readIntervals(

@@ -46,6 +46,34 @@ export function showMainWindow(): void {
   }
 }
 
+/**
+ * Brings the window to the front on a particular screen of the account area.
+ *
+ * Used when something outside the window finishes — a Google sign-in in the
+ * browser — and the person should land back on the screen they started from.
+ *
+ * Windows refuses to let a background process take focus from the app in
+ * front, and `focus()` alone only flashes the taskbar button. Pinning the
+ * window on top for a moment is the accepted way round that; it is released
+ * straight away so the window behaves normally afterwards.
+ */
+export function openMainWindowSection(section: string): void {
+  showMainWindow()
+
+  const window = mainWindow
+  if (!window || window.isDestroyed()) return
+
+  if (process.platform === 'win32') {
+    window.setAlwaysOnTop(true)
+    window.focus()
+    window.setAlwaysOnTop(false)
+  }
+
+  // Sent after the "shown" signal: the renderer lets a named screen win over
+  // the Recorder that coming back from hidden would otherwise land on.
+  window.webContents.send(IPC.EVENT_OPEN_SECTION, section)
+}
+
 /** Hides the window to the tray without tearing down the renderer. */
 export function hideMainWindow(): void {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.hide()

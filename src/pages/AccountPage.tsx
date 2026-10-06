@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import type { KpiNote, McpServerStatus, UserRole } from '@shared/types'
 import { REMINDER_LEAD_OPTIONS } from '@shared/presets'
 import { Avatar } from '@/components/AuthDialog'
+import { GoogleAccounts } from '@/components/GoogleAccounts'
 import { KpiDialog } from '@/components/KpiDialog'
 import { UpdateBanner } from '@/components/UpdateBanner'
 import { Button } from '@/components/ui/Button'
@@ -14,6 +15,7 @@ import { Tooltip } from '@/components/ui/Tooltip'
 import { useAuth } from '@/context/AuthContext'
 import { useSettings } from '@/context/SettingsContext'
 import { useToast } from '@/context/ToastContext'
+import { useAppInfo } from '@/hooks/useAppInfo'
 import { useAppUpdate } from '@/hooks/useAppUpdate'
 import { useKpiNotes } from '@/hooks/useKpiNotes'
 import { useMcpServer } from '@/hooks/useMcpServer'
@@ -30,6 +32,7 @@ import { cn } from '@/utils/cn'
 type Section =
   | 'dashboard'
   | 'calls'
+  | 'calendars'
   | 'tasks'
   | 'activity'
   | 'roles'
@@ -52,6 +55,8 @@ interface SectionDefinition {
 const SECTIONS: ReadonlyArray<SectionDefinition> = [
   { id: 'dashboard', label: 'Dashboard' },
   { id: 'calls', label: 'Calendar', permission: 'calendar.view' },
+  // Importing writes calls, which the database only allows with `calendar.create`.
+  { id: 'calendars', label: 'Google Calendar', permission: 'calendar.create' },
   { id: 'tasks', label: 'Task Manager', permission: 'tasks.view' },
   { id: 'activity', label: 'Team', permission: 'team.view' },
   { id: 'roles', label: 'Roles', permission: 'roles.view' },
@@ -86,6 +91,7 @@ export function AccountPage({
 }: AccountPageProps): React.JSX.Element | null {
   const { user, signOut, can } = useAuth()
   const { push } = useToast()
+  const appInfo = useAppInfo()
   const [section, setSection] = useState<Section>('dashboard')
   const [signingOut, setSigningOut] = useState(false)
 
@@ -203,6 +209,11 @@ export function AccountPage({
       <div className="min-w-0">
         {section === 'dashboard' && <Dashboard />}
         {section === 'calls' && can('calendar.view') && <CallManager />}
+        {/* Assumed configured until the main process answers, so a normal build
+            never flashes the "packaged without a Google client" notice. */}
+        {section === 'calendars' && can('calendar.create') && (
+          <GoogleAccounts configured={appInfo?.googleConfigured ?? true} />
+        )}
         {section === 'tasks' && can('tasks.view') && <TaskManager />}
         {/*
           Guarded on the role as well as on the menu: landing here by any other

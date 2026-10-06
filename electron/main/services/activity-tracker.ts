@@ -5,7 +5,6 @@ import type { ActivitySegment } from '@shared/types'
 import { logger } from '../lib/logger'
 import type { ClockGap } from './clock-watchdog'
 import { clockWatchdog } from './clock-watchdog'
-import { settingsStore } from './settings-store'
 import { currentPolicy, trackingPolicy } from './tracking-policy'
 
 const SCOPE = 'activity'
@@ -54,10 +53,8 @@ let lastSampleAt = 0
  * as they change. Safe to call repeatedly.
  */
 export function initActivityTracker(): void {
-  // The switch belongs to the server; the idle threshold is still a local
-  // setting, so both are watched.
+  // The switch and the idle threshold both come from the server.
   trackingPolicy.on('changed', () => void reconcile())
-  settingsStore.on('changed', () => void reconcile())
   void reconcile()
 
   /*
@@ -97,15 +94,15 @@ export async function stopActivityTracker(): Promise<void> {
 }
 
 async function reconcile(): Promise<void> {
-  const { tracking } = settingsStore.get()
-  const wanted = currentPolicy().trackingEnabled
+  const policy = currentPolicy()
+  const wanted = policy.trackingEnabled
 
   if (wanted && timer === null) {
     lastSampleAt = 0
     timer = setInterval(() => void sample(), SAMPLE_INTERVAL_MS)
     void sample()
     logger.info(SCOPE, 'Activity tracking started', {
-      idleAfterSeconds: tracking.idleAfterSeconds
+      idleAfterSeconds: policy.idleAfterSeconds
     })
     return
   }
@@ -136,8 +133,8 @@ function clearTimer(): void {
  * moment it was known to be true and a fresh one starts now.
  */
 async function sample(): Promise<void> {
-  const { tracking } = settingsStore.get()
-  if (!currentPolicy().trackingEnabled) return
+  const policy = currentPolicy()
+  if (!policy.trackingEnabled) return
 
   const now = Date.now()
 
@@ -145,7 +142,7 @@ async function sample(): Promise<void> {
   // OS knows about — not just the ones this app could see.
   const idleSeconds = powerMonitor.getSystemIdleTime()
   const state: ActivitySegment['state'] =
-    idleSeconds >= tracking.idleAfterSeconds ? 'idle' : 'active'
+    idleSeconds >= policy.idleAfterSeconds ? 'idle' : 'active'
 
   const gapped = lastSampleAt > 0 && now - lastSampleAt > GAP_TOLERANCE_MS
 

@@ -4,7 +4,6 @@ import { join } from 'node:path'
 import { logger } from '../lib/logger'
 import { clockWatchdog } from './clock-watchdog'
 import { assertScreenCaptureAllowed } from './permissions'
-import { settingsStore } from './settings-store'
 import { usesPortalCapture } from './sources'
 import { currentPolicy, trackingPolicy } from './tracking-policy'
 
@@ -33,6 +32,9 @@ const JPEG_QUALITY = 70
 
 let timer: NodeJS.Timeout | null = null
 
+/** The interval the running timer was started with, to notice the schedule changing. */
+let runningEveryMs = 0
+
 /**
  * True once this machine has been found unable to capture — Wayland, or a
  * permission that was refused. Recorded so the reason is logged once rather
@@ -45,10 +47,8 @@ let blocked: string | null = null
 /* -------------------------------------------------------------------------- */
 
 export function initScreenshotScheduler(): void {
-  // Two switches govern this: the server says whether screenshots are taken at
-  // all, the local settings say how often.
+  // Both whether screenshots are taken and how often come from the server.
   trackingPolicy.on('changed', () => reconcile())
-  settingsStore.on('changed', () => reconcile())
   reconcile()
 
   /*
@@ -74,9 +74,17 @@ export function stopScreenshotScheduler(): void {
 }
 
 function reconcile(): void {
-  const wanted = currentPolicy().screenshotsEnabled
+  const policy = currentPolicy()
+  const wanted = policy.screenshotsEnabled
 
   if (wanted && timer === null) {
+    start()
+    return
+  }
+
+  // A new interval from the server takes effect now, not after the old one runs out.
+  if (wanted && timer !== null && runningEveryMs !== policy.screenshotIntervalMinutes * 60_000) {
+    stop()
     start()
     return
   }
@@ -88,14 +96,13 @@ function reconcile(): void {
 }
 
 function start(): void {
-  const { tracking } = settingsStore.get()
-  const everyMs = tracking.screenshotIntervalMinutes * 60_000
+  const { screenshotIntervalMinutes } = currentPolicy()
+  const everyMs = screenshotIntervalMinutes * 60_000
 
   timer = setInterval(() => void capture(), everyMs)
+  runningEveryMs = everyMs
 
-  logger.info(SCOPE, 'Screenshot capture started', {
-    everyMinutes: tracking.screenshotIntervalMinutes
-  })
+  logger.info(SCOPE, 'Screenshot capture started', { everyMinutes: screenshotIntervalMinutes })
 
   /*
    * Catch up if the schedule has already slipped.

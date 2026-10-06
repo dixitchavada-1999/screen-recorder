@@ -180,6 +180,26 @@ export interface TrackingPolicy {
    * off — the schedule they hang off is not running.
    */
   screenshotsEnabled: boolean
+  /**
+   * Whether the application in front and its window title are recorded.
+   * Always false when tracking is off.
+   */
+  appsEnabled: boolean
+  /** Minutes between screenshots, and the length of each input-count window. */
+  screenshotIntervalMinutes: number
+  /** Seconds without keyboard or mouse before the machine counts as idle. */
+  idleAfterSeconds: number
+}
+
+/**
+ * The schedule every tracked machine runs on.
+ *
+ * One row on the server for the whole organisation, set from the Team screen.
+ * Read by each machine along with the rest of its policy.
+ */
+export interface TrackingSchedule {
+  screenshotIntervalMinutes: number
+  idleAfterSeconds: number
 }
 
 /** One person as the admin panel lists them, with their policy. */
@@ -198,6 +218,7 @@ export interface TrackedPerson {
   roleKey: string
   trackingEnabled: boolean
   screenshotsEnabled: boolean
+  appsEnabled: boolean
 }
 
 /* -------------------------------------------------------------------------- */
@@ -442,6 +463,25 @@ export interface ActivityDay {
    * a day with no windows had no measurement, not no work.
    */
   activePercent: number | null
+  /**
+   * Time per application across the day, longest first. Empty when application
+   * tracking was off — the caller tells that apart by the person's switch.
+   */
+  apps: AppUsageSummary[]
+}
+
+/** One application's share of a day, with the window titles that made it up. */
+export interface AppUsageSummary {
+  name: string
+  /** Milliseconds it was the application in front. */
+  ms: number
+  /** The longest-held window titles, longest first. A handful at most. */
+  titles: AppWindowTitle[]
+}
+
+export interface AppWindowTitle {
+  title: string
+  seconds: number
 }
 
 /**

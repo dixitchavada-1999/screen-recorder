@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type {
   ActivityDay,
   ActivityInterval,
+  AppUsageSummary,
   SerializedError,
   TrackedPerson
 } from '@shared/types'
@@ -280,6 +281,9 @@ export function UserActivityDialog({
           </details>
         )}
 
+        {/* ----------------------------- Applications ---------------------- */}
+        <AppsSection apps={data.apps} enabled={person.appsEnabled} />
+
         {/* ------------------------------ Screenshots ---------------------- */}
         <section className="flex flex-col gap-2">
           <h3 className="text-xs font-medium uppercase tracking-wide text-faint">Screenshots</h3>
@@ -329,6 +333,103 @@ export function UserActivityDialog({
 }
 
 /* -------------------------------------------------------------------------- */
+
+/** Applications shown before the rest are folded away. */
+const APPS_SHOWN = 8
+
+/**
+ * Where the day's active time went, by application.
+ *
+ * A bar per application against the longest one, so the shape reads at a
+ * glance; each row opens onto the window titles that made it up — in a browser
+ * that is the pages, in an editor the files.
+ */
+function AppsSection({
+  apps,
+  enabled
+}: {
+  apps: AppUsageSummary[]
+  enabled: boolean
+}): React.JSX.Element {
+  const [showAll, setShowAll] = useState(false)
+  const total = apps.reduce((sum, item) => sum + item.ms, 0)
+  const longest = apps[0]?.ms ?? 0
+  const shown = showAll ? apps : apps.slice(0, APPS_SHOWN)
+
+  return (
+    <section className="flex flex-col gap-2">
+      <div className="flex items-baseline justify-between gap-3">
+        <h3 className="text-xs font-medium uppercase tracking-wide text-faint">Applications</h3>
+        {apps.length > 0 && (
+          <span className="font-mono text-[11px] text-faint">{formatDuration(total)} active</span>
+        )}
+      </div>
+
+      {apps.length === 0 ? (
+        <p className="rounded-xl border border-hairline bg-surface px-3 py-2.5 text-xs leading-relaxed text-muted">
+          {enabled
+            ? 'No applications recorded on this day. Only time at the keyboard is counted, so an idle or switched-off machine records none.'
+            : 'Application tracking is switched off for this person. Turn on "Apps" in the list to record which application was in front.'}
+        </p>
+      ) : (
+        <ul className="flex flex-col divide-y divide-hairline/60 rounded-xl border border-hairline bg-surface">
+          {shown.map((item) => (
+            <li key={item.name}>
+              <details className="group">
+                <summary className="flex cursor-pointer list-none items-center gap-3 px-3 py-2">
+                  <span className="w-40 min-w-0 shrink-0 truncate text-xs text-ink" title={item.name}>
+                    {item.name}
+                  </span>
+                  <span className="relative h-2 flex-1 overflow-hidden rounded-full bg-canvas">
+                    <span
+                      className="absolute inset-y-0 left-0 rounded-full bg-positive/70"
+                      style={{ width: `${longest > 0 ? Math.max(2, (item.ms / longest) * 100) : 0}%` }}
+                    />
+                  </span>
+                  <span className="w-14 shrink-0 text-right font-mono text-[11px] tabular-nums text-ink">
+                    {formatDuration(item.ms)}
+                  </span>
+                  <span className="w-10 shrink-0 text-right font-mono text-[11px] tabular-nums text-faint">
+                    {total > 0 ? `${Math.round((item.ms / total) * 100)}%` : '—'}
+                  </span>
+                  <span
+                    aria-hidden="true"
+                    className="font-mono text-[11px] text-faint transition-transform group-open:rotate-90"
+                  >
+                    ›
+                  </span>
+                </summary>
+
+                {item.titles.length === 0 ? (
+                  <p className="px-3 pb-2.5 text-[11px] text-faint">No window titles recorded.</p>
+                ) : (
+                  <ul className="flex flex-col gap-1 px-3 pb-2.5">
+                    {item.titles.map((entry) => (
+                      <li key={entry.title} className="flex items-center gap-3 text-[11px]">
+                        <span className="min-w-0 flex-1 truncate text-muted" title={entry.title}>
+                          {entry.title}
+                        </span>
+                        <span className="shrink-0 font-mono tabular-nums text-faint">
+                          {formatDuration(entry.seconds * 1000)}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </details>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {apps.length > APPS_SHOWN && (
+        <Button size="sm" variant="ghost" className="self-start" onClick={() => setShowAll(!showAll)}>
+          {showAll ? 'Show fewer' : `Show all ${apps.length} applications`}
+        </Button>
+      )}
+    </section>
+  )
+}
 
 function Stat({
   label,

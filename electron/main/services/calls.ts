@@ -14,9 +14,6 @@ import { currentNexusId, currentUser, getSupabase } from './auth'
 
 const SCOPE = 'calls'
 
-/** Postgres unique-violation. Expected when two syncs race, not an error here. */
-const DUPLICATE_KEY = '23505'
-
 /**
  * Columns the app reads, with the people a call is for embedded alongside.
  *
@@ -350,179 +347,70 @@ export interface ApplyImportedResult {
   removed: number
 }
 
+/** Raised by `apply_google_events` when this person is not linked to the calendar. */
+export const NOT_LINKED = 'P0002'
+
 /**
  * Makes one window of the schedule match one Google calendar.
  *
- * Written as read-then-decide rather than a blind upsert, because the two sides
- * do not own the same fields. Google owns what the meeting *is* — its title and
- * when it happens — and those are overwritten on every sync. The user owns what
- * they have decided about it: the status they set, the notes they wrote. An
- * upsert would erase both every time the calendar refreshed.
+ * One row per meeting, shared by everybody linked to the calendar, so this is
+ * done by the database in one transaction rather than read-then-write from
+ * here: somebody who did not create a row still has to be able to move it when
+ * Google moves the meeting, and only `apply_google_events` may do that. It
+ * overwrites what Google owns — title and time — and never the status or notes.
  *
- * Scoped to the window that was fetched: a call outside it was never looked at,
- * so nothing here may conclude it has disappeared.
+ * Throws an error whose `code` is `NOT_LINKED` when this person has not been
+ * linked to the calendar yet; the caller links and tries again.
  */
 export async function applyImportedCalls(
   email: string,
   range: ScheduledCallRange,
   events: ImportedCallFields[]
 ): Promise<ApplyImportedResult> {
-  const user = requireUser()
+  requireUser()
 
-  const { data, error } = await getSupabase()
-    .from('scheduled_calls')
-    .select(COLUMNS)
-    .eq('google_account_email', email)
-    .gte('starts_at', range.from)
-    .lt('starts_at', range.to)
+  const { data, error } = await getSupabase().rpc('apply_google_events', {
+    p_email: email,
+    p_from: range.from,
+    p_to: range.to,
+    p_events: events.map((event) => ({
+      event_id: event.eventId,
+      title: event.title,
+      starts_at: event.startsAt,
+      duration_minutes: event.durationMinutes,
+      notes: event.notes
+    }))
+  })
 
-  if (error) throw translate(error, 'read the imported calls')
-
-  const existing = new Map(
-    (data as unknown as CallRow[])
-      .filter((row) => row.google_event_id !== null)
-      .map((row) => [row.google_event_id as string, row])
-  )
-
-  const seen = new Set<string>()
-  const result: ApplyImportedResult = { imported: 0, updated: 0, removed: 0 }
-
-  const inserts: Array<Record<string, unknown>> = []
-
-  for (const event of events) {
-    seen.add(event.eventId)
-    const row = existing.get(event.eventId)
-
-    if (!row) {
-      inserts.push({
-        user_id: user.id,
-        title: event.title.slice(0, 200),
-        starts_at: event.startsAt,
-        duration_minutes: event.durationMinutes,
-        notes: event.notes || null,
-        status: 'scheduled',
-        google_event_id: event.eventId,
-        google_account_email: email
-      })
-      continue
-    }
-
-    // Only the fields Google owns, and only when one of them actually moved —
-    // an unchanged calendar should cost no writes at all.
-    const changed =
-      row.title !== event.title ||
-      new Date(row.starts_at).getTime() !== new Date(event.startsAt).getTime() ||
-      row.duration_minutes !== event.durationMinutes
-
-    if (!changed) continue
-
-    const { error: updateError } = await getSupabase()
-      .from('scheduled_calls')
-      .update({
-        title: event.title.slice(0, 200),
-        starts_at: event.startsAt,
-        duration_minutes: event.durationMinutes
-      })
-      .eq('id', row.id)
-
-    if (updateError) throw translate(updateError, 'update an imported call')
-    result.updated += 1
+  if (error) {
+    if (error.code === NOT_LINKED) throw error
+    throw translate(error, 'import the calls')
   }
 
-  if (inserts.length > 0) {
-    const { data: inserted, error: insertError } = await getSupabase()
-      .from('scheduled_calls')
-      .insert(inserts)
-      .select('id')
-
-    /*
-     * A duplicate here is the index doing its job, not a failure.
-     *
-     * Two syncs can overlap — a month change while the first is still running,
-     * two windows open, the effect re-running — and both will have read "not
-     * here yet" for the same event before either wrote. The loser hits the
-     * unique index, and the row it wanted exists either way, which is all the
-     * sync was after.
-     *
-     * Swallowed here rather than avoided with `on conflict do nothing`: the
-     * index is partial (`where google_event_id is not null`), and Postgres
-     * cannot infer a partial index from a conflict target alone — asking it to
-     * fails with 42P10 before it ever reaches the duplicate.
-     */
-    if (insertError && insertError.code !== DUPLICATE_KEY) {
-      throw translate(insertError, 'import the calls')
-    }
-
-    // Count what was really written, so "imported 2" cannot mean "tried 2".
-    const rows = (inserted as unknown as Array<{ id: string }> | null) ?? []
-    result.imported = rows.length
-
-    /*
-     * An imported event is a call this person is on.
-     *
-     * It came off their own calendar, so they are both who arranged it and who
-     * it is for — and without the assignee row it would be in nobody's
-     * schedule, which is precisely where it must not be.
-     */
-    for (const row of rows) {
-      try {
-        await writeAssignees(row.id, resolveAssignees(undefined))
-      } catch (assigneeError) {
-        logger.warn(SCOPE, 'Imported call could not be assigned', { id: row.id, assigneeError })
-      }
-    }
-
-    if (insertError) {
-      logger.debug(SCOPE, 'A concurrent sync had already imported these', {
-        email,
-        events: inserts.length
-      })
-    }
+  const result = data as Partial<ApplyImportedResult> | null
+  return {
+    imported: result?.imported ?? 0,
+    updated: result?.updated ?? 0,
+    removed: result?.removed ?? 0
   }
-
-  /*
-   * Anything still on our side that the calendar no longer returned was deleted
-   * or cancelled in Google. Removing it is the point of following a calendar —
-   * a cancelled meeting that keeps reminding you is worse than no reminder.
-   */
-  const vanished = [...existing.keys()].filter((eventId) => !seen.has(eventId))
-
-  if (vanished.length > 0) {
-    const { error: deleteError } = await getSupabase()
-      .from('scheduled_calls')
-      .delete()
-      .eq('google_account_email', email)
-      .in('google_event_id', vanished)
-
-    if (deleteError) throw translate(deleteError, 'remove cancelled calls')
-    result.removed = vanished.length
-  }
-
-  return result
 }
 
 /**
- * Removes every call imported from one Google account.
+ * Takes this person off one Google calendar's meetings.
  *
- * Called when that account is disconnected: the user asked to stop following
- * that calendar, and leaving its meetings behind would mean a schedule nothing
- * updates any more. Calls the user typed in are untouched — the `not is null`
- * filter is what separates them.
+ * The meetings stay for anybody else still linked to that calendar; only when
+ * nobody is left do they go. Calls typed into the app are never touched.
+ * Returns how many meetings were deleted outright.
  */
 export async function deleteCallsFromGoogleAccount(email: string): Promise<number> {
   requireUser()
 
-  const { data, error } = await getSupabase()
-    .from('scheduled_calls')
-    .delete()
-    .eq('google_account_email', email)
-    .not('google_event_id', 'is', null)
-    .select('id')
+  const { data, error } = await getSupabase().rpc('unlink_google_account', { p_email: email })
 
   if (error) throw translate(error, 'remove the imported calls')
 
-  const removed = (data as unknown as Array<{ id: string }>).length
-  logger.info(SCOPE, 'Removed imported calls', { email, removed })
+  const removed = typeof data === 'number' ? data : 0
+  logger.info(SCOPE, 'Unlinked from a Google calendar', { email, removed })
   return removed
 }
 
