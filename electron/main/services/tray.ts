@@ -1,9 +1,12 @@
-import { app, Menu, nativeImage, Tray, BrowserWindow } from 'electron'
+import { app, Menu, nativeImage, Tray } from 'electron'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { IPC } from '@shared/ipc'
 import type { RecorderStateSync, TrayCommand } from '@shared/types'
 import { logger } from '../lib/logger'
+import { getMainWindow } from '../window'
+import { isSignedIn, onSignedInChange } from './auth'
+import { isFloatingButtonVisible, setFloatingButtonVisible } from './floating-button'
 import { settingsStore } from './settings-store'
 
 const SCOPE = 'tray'
@@ -94,7 +97,7 @@ function loadTrayIcon(): Electron.NativeImage {
 /* -------------------------------------------------------------------------- */
 
 function sendCommand(command: TrayCommand): void {
-  const [window] = BrowserWindow.getAllWindows()
+  const window = getMainWindow()
   if (!window || window.isDestroyed()) {
     logger.warn(SCOPE, 'Tray command ignored, no window is available', { command })
     return
@@ -114,7 +117,7 @@ function sendCommand(command: TrayCommand): void {
 function openSection(section: string): void {
   callbacks?.onShowWindow()
 
-  const [window] = BrowserWindow.getAllWindows()
+  const window = getMainWindow()
   if (!window || window.isDestroyed()) {
     logger.warn(SCOPE, 'Tray could not open a section, no window is available', { section })
     return
@@ -159,6 +162,19 @@ function buildMenu(): Electron.Menu {
       click: () => callbacks?.onHideWindow()
     },
     {
+      // The round button on the desktop. Unticked, it stays away across
+      // restarts until it is ticked again here. Only offered while signed in,
+      // like the button itself.
+      label: 'Floating Button',
+      type: 'checkbox',
+      visible: isSignedIn(),
+      checked: isFloatingButtonVisible(),
+      click: (item) => {
+        setFloatingButtonVisible(item.checked)
+        refresh()
+      }
+    },
+    {
       // Straight to the day, without going through the recorder and the home
       // icon first. Checking what is on is the commonest reason to open this at
       // all, and it was three clicks away.
@@ -200,14 +216,15 @@ function refresh(): void {
   tray.setContextMenu(buildMenu())
 
   const { state } = currentState
-  const tracking = settingsStore.get().tracking.enabled ? ' · tracking activity' : ''
 
   const tooltip =
     state === 'recording'
       ? `Screen Recorder — recording ${formatElapsed(currentState.elapsedMs)}`
       : state === 'paused'
         ? `Screen Recorder — paused ${formatElapsed(currentState.elapsedMs)}`
-        : `Screen Recorder${tracking}`
+        : // Says nothing about activity tracking: that is the organisation's
+          // business, kept to the admin screens, not announced on every machine.
+          'Screen Recorder'
 
   tray.setToolTip(tooltip)
 }
@@ -226,10 +243,9 @@ export function createTray(handlers: TrayCallbacks): void {
   tray.on('click', () => handlers.onShowWindow())
   tray.on('double-click', () => handlers.onShowWindow())
 
-  // Tracking can be switched from the window, from here, or by a settings
-  // change anywhere else — the menu follows the setting rather than whoever
-  // happened to flip it.
+  // The menu follows the settings, whoever changed them, and signing in or out.
   settingsStore.on('changed', () => refresh())
+  onSignedInChange(() => refresh())
 
   refresh()
   logger.info(SCOPE, 'Tray created')

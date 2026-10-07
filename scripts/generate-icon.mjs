@@ -11,7 +11,7 @@
  */
 import { deflateSync } from 'node:zlib'
 import { mkdirSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const SIZE = 512
@@ -67,6 +67,51 @@ function drawPixel(x, y) {
   colour = mix(colour, DOT, coverage(distanceFromCentre - 86))
 
   return { ...colour, a: Math.round(255 * tileAlpha) }
+}
+
+/**
+ * The 512-pixel design at any other size.
+ *
+ * `drawPixel` works in the 512-pixel grid, so painting a 16-pixel raster with it
+ * directly drew the empty top-left corner of the design — every small icon came
+ * out transparent. Each output pixel is instead the average of a 4×4 grid of
+ * samples across the area it covers, which also keeps small sizes smooth.
+ */
+function scaledPainter(size) {
+  if (size === SIZE) return drawPixel
+
+  const factor = SIZE / size
+  const SAMPLES = 4
+
+  return (x, y) => {
+    let r = 0
+    let g = 0
+    let b = 0
+    let a = 0
+
+    for (let sy = 0; sy < SAMPLES; sy += 1) {
+      for (let sx = 0; sx < SAMPLES; sx += 1) {
+        // `drawPixel` adds half a pixel itself, so take it off here.
+        const pixel = drawPixel(
+          (x + (sx + 0.5) / SAMPLES) * factor - 0.5,
+          (y + (sy + 0.5) / SAMPLES) * factor - 0.5
+        )
+        // Weighted by alpha, so the transparent edge does not darken the colour.
+        r += pixel.r * pixel.a
+        g += pixel.g * pixel.a
+        b += pixel.b * pixel.a
+        a += pixel.a
+      }
+    }
+
+    if (a === 0) return rgba(0, 0, 0, 0)
+    return rgba(Math.round(r / a), Math.round(g / a), Math.round(b / a), Math.round(a / SAMPLES ** 2))
+  }
+}
+
+/** The app icon as a PNG at any size. Also used for the browser extension's icons. */
+export function iconPng(size) {
+  return encodePng(buildRaster(size, scaledPainter(size)), size)
 }
 
 /* -------------------------------- Encoding -------------------------------- */
@@ -181,7 +226,7 @@ function drawTrayPixel(x, y, size) {
  * which is the rule the rest of this script follows.
  */
 function writeIco(fileName, sizes) {
-  const images = sizes.map((size) => ({ size, png: encodePng(buildRaster(size), size) }))
+  const images = sizes.map((size) => ({ size, png: iconPng(size) }))
 
   const header = Buffer.alloc(6)
   header.writeUInt16LE(0, 0) // reserved
@@ -225,19 +270,24 @@ function writeTrayIcon(fileName, size) {
 
 /* --------------------------------- Main ----------------------------------- */
 
-mkdirSync(BUILD_DIR, { recursive: true })
+function main() {
+  mkdirSync(BUILD_DIR, { recursive: true })
 
-const png = encodePng(buildRaster())
-writeFileSync(OUTPUT, png)
-console.log(`Wrote ${OUTPUT} (${SIZE}x${SIZE}, ${(png.length / 1024).toFixed(1)} kB)`)
+  const png = encodePng(buildRaster())
+  writeFileSync(OUTPUT, png)
+  console.log(`Wrote ${OUTPUT} (${SIZE}x${SIZE}, ${(png.length / 1024).toFixed(1)} kB)`)
 
-/*
- * Every size Windows asks for, from the taskbar to the 256-pixel tile the
- * installer and the Properties dialog use.
- */
-writeIco('icon.ico', [16, 24, 32, 48, 64, 128, 256])
+  /*
+   * Every size Windows asks for, from the taskbar to the 256-pixel tile the
+   * installer and the Properties dialog use.
+   */
+  writeIco('icon.ico', [16, 24, 32, 48, 64, 128, 256])
 
-// `nativeImage` picks the @2x file up automatically on Retina displays, and the
-// "Template" suffix is what marks the image as tintable to macOS.
-writeTrayIcon('trayTemplate.png', 16)
-writeTrayIcon('trayTemplate@2x.png', 32)
+  // `nativeImage` picks the @2x file up automatically on Retina displays, and the
+  // "Template" suffix is what marks the image as tintable to macOS.
+  writeTrayIcon('trayTemplate.png', 16)
+  writeTrayIcon('trayTemplate@2x.png', 32)
+}
+
+// Only when run directly; importing this for `iconPng` must not rewrite build/.
+if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) main()

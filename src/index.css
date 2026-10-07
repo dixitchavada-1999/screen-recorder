@@ -76,6 +76,11 @@
 }
 
 @layer utilities {
+  /* The quick panel's window is transparent around its rounded card. */
+  html.panel-view body {
+    background-color: transparent;
+  }
+
   /* Slow, low-cost pulse for the recording indicator. */
   @keyframes recording-pulse {
     0%,

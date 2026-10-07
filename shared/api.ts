@@ -42,9 +42,12 @@ import type {
   TrackedPerson,
   TrackingPolicy,
   TrackingSchedule,
+  ThisDevice,
   Transcript,
   TranscriptProgress,
   TrayCommand,
+  UninstallPasswordInfo,
+  UntrackedDevice,
   UpdateStatus,
   UserPermission,
   WhisperModelKey,
@@ -197,13 +200,30 @@ export interface RecorderApi {
     people(): Promise<IpcResult<TrackedPerson[]>>
     setPolicy(
       userId: string,
-      patch: { trackingEnabled?: boolean; screenshotsEnabled?: boolean; appsEnabled?: boolean }
+      patch: { trackingEnabled?: boolean; screenshotsEnabled?: boolean; appsEnabled?: boolean; browserEnabled?: boolean }
     ): Promise<IpcResult<TrackedPerson>>
     /** Segments and captures for one person between two instants. */
     day(userId: string, from: string, to: string): Promise<IpcResult<ActivityDay>>
     /** The schedule every tracked machine runs on, from the server. */
     schedule(): Promise<IpcResult<TrackingSchedule>>
     setSchedule(patch: Partial<TrackingSchedule>): Promise<IpcResult<TrackingSchedule>>
+  }
+
+  /**
+   * Installations that record nothing. `this` and `canManage` are for anyone;
+   * the list and its changes only for the people the server allows.
+   */
+  devices: {
+    this(): Promise<IpcResult<ThisDevice>>
+    canManage(): Promise<IpcResult<boolean>>
+    listUntracked(): Promise<IpcResult<UntrackedDevice[]>>
+    addUntracked(machineId: string, label: string | null): Promise<IpcResult<void>>
+    /** Every installation of one computer. Resolves with how many were removed. */
+    removeUntracked(machineIds: string[]): Promise<IpcResult<number>>
+    /** When the uninstall password last changed. Device admins only. */
+    uninstallPasswordInfo(): Promise<IpcResult<UninstallPasswordInfo>>
+    /** Sets the uninstall password for every machine. Hashed before it leaves this one. */
+    setUninstallPassword(password: string): Promise<IpcResult<UninstallPasswordInfo>>
   }
 
   /** The Call Manager's schedule, stored with the account. Requires sign-in. */
@@ -456,6 +476,16 @@ export interface RecorderApi {
      * the tray's "Open Calendar", and anything like it later.
      */
     onOpenSection(listener: (section: string) => void): Unsubscribe
+  }
+
+  /** The quick panel's own window. Nothing here does anything in the app window. */
+  panel: {
+    /** Puts the panel away. */
+    hide(): void
+    /** Opens the app window, on a section of the account area when one is named. */
+    openApp(section?: string): void
+    /** Fires each time the panel is about to come on screen. */
+    onShown(listener: () => void): Unsubscribe
   }
 
   tray: {

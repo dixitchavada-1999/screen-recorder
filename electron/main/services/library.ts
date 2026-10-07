@@ -1,4 +1,4 @@
-import { app, dialog, protocol, shell, BrowserWindow } from 'electron'
+import { app, dialog, protocol, shell } from 'electron'
 import {
   constants as fsConstants,
   createReadStream,
@@ -15,6 +15,7 @@ import { spawn } from 'node:child_process'
 import type { RecordingEntry } from '@shared/types'
 import { AppError, ERROR_CODES } from '../lib/errors'
 import { logger } from '../lib/logger'
+import { getMainWindow } from '../window'
 import { deleteTranscript } from './transcript-store'
 import { deleteVoiceTrack } from './voice-track'
 import { resolveFfmpegPath } from './ffmpeg-locator'
@@ -490,7 +491,7 @@ export async function exportRecording(id: string): Promise<string | null> {
     )
   }
 
-  const parent = BrowserWindow.getAllWindows()[0]
+  const parent = getMainWindow()
   const options: Electron.SaveDialogOptions = {
     title: 'Save recording',
     defaultPath: join(app.getPath('downloads'), basename(entry.path)),
@@ -541,7 +542,7 @@ async function assertWritable(folder: string): Promise<void> {
  * an hour later when a capture fails to save.
  */
 export async function chooseLibraryFolder(): Promise<string | null> {
-  const parent = BrowserWindow.getAllWindows()[0]
+  const parent = getMainWindow()
   const options: Electron.OpenDialogOptions = {
     title: 'Choose where recordings are saved',
     defaultPath: libraryDirectory(),

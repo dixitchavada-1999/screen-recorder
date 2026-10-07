@@ -1,0 +1,778 @@
+{
+  "info": {
+    "name": "Screen Recorder — Projects & Tasks API v1",
+    "_postman_id": "b6f0c3e4-6a2d-4a8e-9a5e-3c1d2e7f9a10",
+    "description": "Create, read, update and delete projects and tasks without signing in. Set the `apiKey` collection variable once; every request sends it as `x-api-key`. Run \"Create a project\" and \"Create a task\" first — they fill `projectId` and `taskId` for the rest. Full reference: docs/PROJECTS_TASKS_API.md.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "apikey",
+    "apikey": [
+      {
+        "key": "key",
+        "value": "x-api-key",
+        "type": "string"
+      },
+      {
+        "key": "value",
+        "value": "{{apiKey}}",
+        "type": "string"
+      },
+      {
+        "key": "in",
+        "value": "header",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "https://xnppcykubshfkrxvchgt.supabase.co/functions/v1/tasks-api/v1"
+    },
+    {
+      "key": "apiKey",
+      "value": "",
+      "description": "Your API key. Keep it out of shared workspaces."
+    },
+    {
+      "key": "projectId",
+      "value": "",
+      "description": "Filled by \"Create a project\"."
+    },
+    {
+      "key": "taskId",
+      "value": "",
+      "description": "Filled by \"Create a task\"."
+    },
+    {
+      "key": "projectExternalId",
+      "value": "postman-client-1"
+    },
+    {
+      "key": "callId",
+      "value": "postman-call-1"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('answers with JSON and a request id', () => {",
+              "  pm.response.to.have.header('X-Request-Id');",
+              "});",
+              "pm.test('status is 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));",
+              "pm.test('ok', () => pm.expect(pm.response.json().ok).to.eql(true));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "auth": {
+          "type": "noauth"
+        },
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/health",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "health"
+          ]
+        },
+        "description": "No key needed. `ok: true` means the API is up and configured."
+      },
+      "response": []
+    },
+    {
+      "name": "Projects",
+      "item": [
+        {
+          "name": "Create a project",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('answers with JSON and a request id', () => {",
+                  "  pm.response.to.have.header('X-Request-Id');",
+                  "});",
+                  "pm.test('status is 200 or 201', () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));",
+                  "if (pm.response.code < 300) pm.collectionVariables.set('projectId', pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Postman Demo Client\",\n  \"external_id\": \"{{projectExternalId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/projects",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "projects"
+              ]
+            },
+            "description": "201 when created, 200 when a project with that external_id already exists (returned as is). Comes with a \"To do\" section."
+          },
+          "response": []
+        },
+        {
+          "name": "List projects",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('answers with JSON and a request id', () => {",
+                  "  pm.response.to.have.header('X-Request-Id');",
+                  "});",
+                  "pm.test('status is 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/projects?limit=50&offset=0",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "projects"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50",
+                  "description": "1–200"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Find a project by name",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('answers with JSON and a request id', () => {",
+                  "  pm.response.to.have.header('X-Request-Id');",
+                  "});",
+                  "pm.test('status is 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/projects?name=Postman Demo Client",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "projects"
+              ],
+              "query": [
+                {
+                  "key": "name",
+                  "value": "Postman Demo Client",
+                  "description": "Exact name, case ignored"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Find a project by external_id",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('answers with JSON and a request id', () => {",
+                  "  pm.response.to.have.header('X-Request-Id');",
+                  "});",
+                  "pm.test('status is 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/projects?external_id={{projectExternalId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "projects"
+              ],
+              "query": [
+                {
+                  "key": "external_id",
+                  "value": "{{projectExternalId}}"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Get a project",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('answers with JSON and a request id', () => {",
+                  "  pm.response.to.have.header('X-Request-Id');",
+                  "});",
+                  "pm.test('status is 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/projects/{{projectId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "projects",
+                "{{projectId}}"
+              ]
+            },
+            "description": "With its sections and number of tasks."
+          },
+          "response": []
+        },
+        {
+          "name": "Update a project",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('answers with JSON and a request id', () => {",
+                  "  pm.response.to.have.header('X-Request-Id');",
+                  "});",
+                  "pm.test('status is 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Postman Demo Client (renamed)\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/projects/{{projectId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "projects",
+                "{{projectId}}"
+              ]
+            },
+            "description": "Send `name` and/or `external_id` (`null` removes it)."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Tasks",
+      "item": [
+        {
+          "name": "Create a task",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('answers with JSON and a request id', () => {",
+                  "  pm.response.to.have.header('X-Request-Id');",
+                  "});",
+                  "pm.test('status is 200 or 201', () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));",
+                  "if (pm.response.code < 300) pm.collectionVariables.set('taskId', pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"project_id\": \"{{projectId}}\",\n  \"title\": \"Send the revised quote\",\n  \"description\": \"Client asked for the quote with the new freight rates.\",\n  \"due_at\": \"2026-12-31\",\n  \"priority\": \"high\",\n  \"external_id\": \"{{callId}}-item-1\",\n  \"source\": \"Postman demo call\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/tasks",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tasks"
+              ]
+            },
+            "description": "Project by `project_id`, `project_external_id` or `project_name` (+ `create_project_if_missing`). 201 when created; 200 with `created: false` when that external_id was already used in the project."
+          },
+          "response": []
+        },
+        {
+          "name": "Create a task by project name (create project if missing)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('answers with JSON and a request id', () => {",
+                  "  pm.response.to.have.header('X-Request-Id');",
+                  "});",
+                  "pm.test('status is 200 or 201', () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"project_name\": \"Postman Demo Client (renamed)\",\n  \"create_project_if_missing\": true,\n  \"title\": \"Book the inspection slot\",\n  \"priority\": \"Medium\",\n  \"external_id\": \"{{callId}}-item-2\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/tasks",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tasks"
+              ]
+            },
+            "description": "\"Medium\" is read as \"normal\" and reported in `warnings`."
+          },
+          "response": []
+        },
+        {
+          "name": "Create several tasks (batch)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('answers with JSON and a request id', () => {",
+                  "  pm.response.to.have.header('X-Request-Id');",
+                  "});",
+                  "pm.test('status is 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"project_external_id\": \"{{projectExternalId}}\",\n  \"source\": \"Postman demo call\",\n  \"tasks\": [\n    {\n      \"title\": \"Confirm 40 extra pallets\",\n      \"priority\": \"urgent\",\n      \"external_id\": \"{{callId}}-item-3\"\n    },\n    {\n      \"description\": \"Share the delayed-shipment list\\nSeven shipments are late.\",\n      \"external_id\": \"{{callId}}-item-4\"\n    },\n    {\n      \"title\": \"Schedule the follow-up call\",\n      \"due_at\": \"2026-12-15\",\n      \"priority\": \"low\",\n      \"external_id\": \"{{callId}}-item-5\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/tasks/batch",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tasks",
+                "batch"
+              ]
+            },
+            "description": "Up to 50. Always 200; each item reports `created`, `exists` or `error`. Safe to resend."
+          },
+          "response": []
+        },
+        {
+          "name": "List tasks of a project",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('answers with JSON and a request id', () => {",
+                  "  pm.response.to.have.header('X-Request-Id');",
+                  "});",
+                  "pm.test('status is 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/projects/{{projectId}}/tasks?limit=50&offset=0",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "projects",
+                "{{projectId}}",
+                "tasks"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "List tasks (filters)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('answers with JSON and a request id', () => {",
+                  "  pm.response.to.have.header('X-Request-Id');",
+                  "});",
+                  "pm.test('status is 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/tasks?project_external_id={{projectExternalId}}&priority=urgent&updated_since=2026-01-01T00:00:00Z",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tasks"
+              ],
+              "query": [
+                {
+                  "key": "project_external_id",
+                  "value": "{{projectExternalId}}",
+                  "description": "or project_id / project_name"
+                },
+                {
+                  "key": "priority",
+                  "value": "urgent",
+                  "description": "low, normal, high, urgent (synonyms accepted)"
+                },
+                {
+                  "key": "updated_since",
+                  "value": "2026-01-01T00:00:00Z",
+                  "description": "Only tasks changed after this time"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Find a task by external_id",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('answers with JSON and a request id', () => {",
+                  "  pm.response.to.have.header('X-Request-Id');",
+                  "});",
+                  "pm.test('status is 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/tasks?project_id={{projectId}}&external_id={{callId}}-item-1",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tasks"
+              ],
+              "query": [
+                {
+                  "key": "project_id",
+                  "value": "{{projectId}}"
+                },
+                {
+                  "key": "external_id",
+                  "value": "{{callId}}-item-1"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Get a task",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('answers with JSON and a request id', () => {",
+                  "  pm.response.to.have.header('X-Request-Id');",
+                  "});",
+                  "pm.test('status is 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/tasks/{{taskId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tasks",
+                "{{taskId}}"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Update a task",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('answers with JSON and a request id', () => {",
+                  "  pm.response.to.have.header('X-Request-Id');",
+                  "});",
+                  "pm.test('status is 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Send the revised quote (v2)\",\n  \"priority\": \"urgent\",\n  \"due_at\": null\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/tasks/{{taskId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tasks",
+                "{{taskId}}"
+              ]
+            },
+            "description": "Only the fields that change. `null` clears `due_at`, `description`, `source`, `external_id`. `section_id` / `section_name` moves it."
+          },
+          "response": []
+        },
+        {
+          "name": "Delete a task",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('answers with JSON and a request id', () => {",
+                  "  pm.response.to.have.header('X-Request-Id');",
+                  "});",
+                  "pm.test('status is 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/tasks/{{taskId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tasks",
+                "{{taskId}}"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Clean-up",
+      "item": [
+        {
+          "name": "Delete the project",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('answers with JSON and a request id', () => {",
+                  "  pm.response.to.have.header('X-Request-Id');",
+                  "});",
+                  "pm.test('status is 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/projects/{{projectId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "projects",
+                "{{projectId}}"
+              ]
+            },
+            "description": "Deletes the project and every task in it."
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}

@@ -116,6 +116,18 @@ export function computeVideoBitrateKbps(
 /*                              Default settings                              */
 /* -------------------------------------------------------------------------- */
 
+/** The colours offered for the floating button, the accent first. */
+export const FLOATING_BUTTON_COLORS = [
+  '#6366f1',
+  '#0ea5e9',
+  '#10b981',
+  '#f59e0b',
+  '#ef4444',
+  '#ec4899',
+  '#8b5cf6',
+  '#334155'
+] as const
+
 export const SETTINGS_SCHEMA_VERSION = 5
 
 /** Lead times the Call Manager settings offer, longest first. */
@@ -173,6 +185,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
      * so there is nothing to configure and no second pass.
      */
     model: 'small'
+  },
+  floatingButton: {
+    // The app's accent.
+    color: '#6366f1'
   },
   shortcuts: {
     /*

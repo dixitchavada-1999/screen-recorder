@@ -146,6 +146,11 @@ function sanitize(settings: AppSettings): AppSettings {
     next.video.quality = DEFAULT_SETTINGS.video.quality
   }
 
+  // Goes into the button's CSS as is, so nothing but a plain hex colour.
+  if (typeof next.floatingButton?.color !== 'string' || !/^#[0-9a-f]{6}$/i.test(next.floatingButton.color)) {
+    next.floatingButton = { ...DEFAULT_SETTINGS.floatingButton }
+  }
+
   next.audio.microphoneGain = clamp(next.audio.microphoneGain, 0, 2, 1)
   next.audio.systemAudioGain = clamp(next.audio.systemAudioGain, 0, 2, 1)
 

@@ -3,11 +3,13 @@ import type {
   ActivityDay,
   ActivityInterval,
   AppUsageSummary,
+  BrowserDaySummary,
   SerializedError,
   TrackedPerson
 } from '@shared/types'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
+import { ScreenshotViewer } from '@/components/ScreenshotViewer'
 import { toSerializedError, unwrap } from '@/services/ipc'
 import { cn } from '@/utils/cn'
 import { formatDuration } from '@/utils/format'
@@ -37,6 +39,11 @@ export function UserActivityDialog({
   const [data, setData] = useState<ActivityDay | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<SerializedError | null>(null)
+  /** The screenshot open full size, by its place in the day's list. */
+  const [shotIndex, setShotIndex] = useState<number | null>(null)
+
+  // Another person or another day means another set of pictures.
+  useEffect(() => setShotIndex(null), [person, day])
 
   /*
    * Reloads whenever the person or the date changes.
@@ -282,7 +289,10 @@ export function UserActivityDialog({
         )}
 
         {/* ----------------------------- Applications ---------------------- */}
-        <AppsSection apps={data.apps} enabled={person.appsEnabled} />
+        <AppsSection apps={data.apps} enabled={person.trackingEnabled} />
+
+        {/* ------------------------------- Browser ------------------------- */}
+        <BrowserSection browser={data.browser} enabled={person.trackingEnabled} />
 
         {/* ------------------------------ Screenshots ---------------------- */}
         <section className="flex flex-col gap-2">
@@ -296,22 +306,27 @@ export function UserActivityDialog({
             </p>
           ) : (
             <ul className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-              {data.screenshots.map((shot) => (
+              {data.screenshots.map((shot, index) => (
                 <li
                   key={shot.capturedAt}
                   className="overflow-hidden rounded-lg border border-hairline bg-surface"
                 >
                   {/* Links are signed and expire; a tile that says so beats a
-                      broken image icon. */}
+                      broken image icon. Opens here, not in the browser. */}
                   {shot.url ? (
-                    <a href={shot.url} target="_blank" rel="noreferrer">
+                    <button
+                      type="button"
+                      onClick={() => setShotIndex(index)}
+                      aria-label={`View the screenshot from ${timeLabel(shot.capturedAt)}`}
+                      className="block w-full cursor-zoom-in transition-opacity hover:opacity-85"
+                    >
                       <img
                         src={shot.url}
                         alt={`Screen at ${timeLabel(shot.capturedAt)}`}
                         loading="lazy"
                         className="aspect-video w-full bg-canvas object-cover"
                       />
-                    </a>
+                    </button>
                   ) : (
                     <div className="grid aspect-video place-items-center bg-canvas text-[10px] text-faint">
                       link expired
@@ -328,6 +343,14 @@ export function UserActivityDialog({
         </>
         )}
       </div>
+
+      <ScreenshotViewer
+        day={data}
+        activityEnabled={person.trackingEnabled}
+        index={shotIndex}
+        onIndexChange={setShotIndex}
+        onClose={() => setShotIndex(null)}
+      />
     </Modal>
   )
 }
@@ -356,76 +379,258 @@ function AppsSection({
   const longest = apps[0]?.ms ?? 0
   const shown = showAll ? apps : apps.slice(0, APPS_SHOWN)
 
+  /*
+    Collapsed by default, like the activity track above it: the summary line
+    already says how many applications and how long, and the list is the
+    detail somebody opens when that raises a question.
+  */
+  return (
+    <details className="group/apps rounded-xl border border-hairline bg-surface">
+      <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2.5">
+        <span className="text-xs font-medium uppercase tracking-wide text-faint">Applications</span>
+        <span className="text-[11px] text-faint">
+          {apps.length === 0
+            ? 'none'
+            : `${apps.length} ${apps.length === 1 ? 'application' : 'applications'} · ${formatDuration(total)} active`}
+        </span>
+        <span
+          aria-hidden="true"
+          className="ml-auto font-mono text-[11px] text-faint transition-transform group-open/apps:rotate-90"
+        >
+          ›
+        </span>
+      </summary>
+
+      <div className="flex flex-col gap-2 border-t border-hairline">
+        {apps.length === 0 ? (
+          <p className="px-3 py-2.5 text-xs leading-relaxed text-muted">
+            {enabled
+              ? 'No applications recorded on this day. Only time at the keyboard is counted, so an idle or switched-off machine records none.'
+              : 'Activity is switched off for this person. Turn on "Activity" in the list to record which applications they use.'}
+          </p>
+        ) : (
+          <ul className="flex flex-col divide-y divide-hairline/60">
+            {shown.map((item) => (
+              <li key={item.name}>
+                <details className="group">
+                  <summary className="flex cursor-pointer list-none items-center gap-3 px-3 py-2">
+                    <span className="w-40 min-w-0 shrink-0 truncate text-xs text-ink" title={item.name}>
+                      {item.name}
+                    </span>
+                    <span className="relative h-2 flex-1 overflow-hidden rounded-full bg-canvas">
+                      <span
+                        className="absolute inset-y-0 left-0 rounded-full bg-positive/70"
+                        style={{ width: `${longest > 0 ? Math.max(2, (item.ms / longest) * 100) : 0}%` }}
+                      />
+                    </span>
+                    <span className="w-14 shrink-0 text-right font-mono text-[11px] tabular-nums text-ink">
+                      {formatDuration(item.ms)}
+                    </span>
+                    <span className="w-10 shrink-0 text-right font-mono text-[11px] tabular-nums text-faint">
+                      {total > 0 ? `${Math.round((item.ms / total) * 100)}%` : '—'}
+                    </span>
+                    <span
+                      aria-hidden="true"
+                      className="font-mono text-[11px] text-faint transition-transform group-open:rotate-90"
+                    >
+                      ›
+                    </span>
+                  </summary>
+
+                  {item.titles.length === 0 ? (
+                    <p className="px-3 pb-2.5 text-[11px] text-faint">No window titles recorded.</p>
+                  ) : (
+                    <ul className="flex flex-col gap-1 px-3 pb-2.5">
+                      {item.titles.map((entry) => (
+                        <li key={entry.title} className="flex items-center gap-3 text-[11px]">
+                          <span className="min-w-0 flex-1 truncate text-muted" title={entry.title}>
+                            {entry.title}
+                          </span>
+                          <span className="shrink-0 font-mono tabular-nums text-faint">
+                            {formatDuration(entry.seconds * 1000)}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </details>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {apps.length > APPS_SHOWN && (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="mb-2 ml-1 self-start"
+            onClick={() => setShowAll(!showAll)}
+          >
+            {showAll ? 'Show fewer' : `Show all ${apps.length} applications`}
+          </Button>
+        )}
+      </div>
+    </details>
+  )
+}
+
+/** Sites shown before the rest are folded away. */
+const SITES_SHOWN = 8
+
+/** Searches shown before the rest are folded away. */
+const SEARCHES_SHOWN = 15
+
+/**
+ * Where the day's browsing went, from the browser extension.
+ *
+ * Sites the same way as applications — a bar each, opening onto the pages —
+ * and then the searches in the order they were made, because "what were they
+ * looking for" is a different question from "where did the time go".
+ */
+function BrowserSection({
+  browser,
+  enabled
+}: {
+  browser: BrowserDaySummary
+  enabled: boolean
+}): React.JSX.Element {
+  const [allSites, setAllSites] = useState(false)
+  const [allSearches, setAllSearches] = useState(false)
+
+  const { sites, searches } = browser
+  const total = sites.reduce((sum, site) => sum + site.ms, 0)
+  const longest = sites[0]?.ms ?? 0
+  const shownSites = allSites ? sites : sites.slice(0, SITES_SHOWN)
+  const shownSearches = allSearches ? searches : searches.slice(0, SEARCHES_SHOWN)
+
   return (
     <section className="flex flex-col gap-2">
       <div className="flex items-baseline justify-between gap-3">
-        <h3 className="text-xs font-medium uppercase tracking-wide text-faint">Applications</h3>
-        {apps.length > 0 && (
-          <span className="font-mono text-[11px] text-faint">{formatDuration(total)} active</span>
+        <h3 className="text-xs font-medium uppercase tracking-wide text-faint">Browser</h3>
+        {sites.length > 0 && (
+          <span className="font-mono text-[11px] text-faint">
+            {formatDuration(total)} · {searches.length}{' '}
+            {searches.length === 1 ? 'search' : 'searches'}
+          </span>
         )}
       </div>
 
-      {apps.length === 0 ? (
+      {sites.length === 0 ? (
         <p className="rounded-xl border border-hairline bg-surface px-3 py-2.5 text-xs leading-relaxed text-muted">
           {enabled
-            ? 'No applications recorded on this day. Only time at the keyboard is counted, so an idle or switched-off machine records none.'
-            : 'Application tracking is switched off for this person. Turn on "Apps" in the list to record which application was in front.'}
+            ? 'No browsing recorded on this day. The browser extension has to be installed in Chrome or Edge, and only time at the keyboard is counted.'
+            : 'Activity is switched off for this person. Turn on "Activity" in the list to record browser tabs and searches.'}
         </p>
       ) : (
-        <ul className="flex flex-col divide-y divide-hairline/60 rounded-xl border border-hairline bg-surface">
-          {shown.map((item) => (
-            <li key={item.name}>
-              <details className="group">
-                <summary className="flex cursor-pointer list-none items-center gap-3 px-3 py-2">
-                  <span className="w-40 min-w-0 shrink-0 truncate text-xs text-ink" title={item.name}>
-                    {item.name}
-                  </span>
-                  <span className="relative h-2 flex-1 overflow-hidden rounded-full bg-canvas">
+        <>
+          <ul className="flex flex-col divide-y divide-hairline/60 rounded-xl border border-hairline bg-surface">
+            {shownSites.map((site) => (
+              <li key={site.domain}>
+                <details className="group">
+                  <summary className="flex cursor-pointer list-none items-center gap-3 px-3 py-2">
                     <span
-                      className="absolute inset-y-0 left-0 rounded-full bg-positive/70"
-                      style={{ width: `${longest > 0 ? Math.max(2, (item.ms / longest) * 100) : 0}%` }}
-                    />
-                  </span>
-                  <span className="w-14 shrink-0 text-right font-mono text-[11px] tabular-nums text-ink">
-                    {formatDuration(item.ms)}
-                  </span>
-                  <span className="w-10 shrink-0 text-right font-mono text-[11px] tabular-nums text-faint">
-                    {total > 0 ? `${Math.round((item.ms / total) * 100)}%` : '—'}
-                  </span>
-                  <span
-                    aria-hidden="true"
-                    className="font-mono text-[11px] text-faint transition-transform group-open:rotate-90"
-                  >
-                    ›
-                  </span>
-                </summary>
+                      className={cn(
+                        'w-40 min-w-0 shrink-0 truncate text-xs',
+                        site.excluded ? 'text-faint' : 'text-ink'
+                      )}
+                      title={site.domain}
+                    >
+                      {site.domain === 'newtab' ? 'New tab' : site.domain}
+                    </span>
+                    <span className="relative h-2 flex-1 overflow-hidden rounded-full bg-canvas">
+                      <span
+                        className={cn(
+                          'absolute inset-y-0 left-0 rounded-full',
+                          site.excluded ? 'bg-faint/50' : 'bg-accent/70'
+                        )}
+                        style={{ width: `${longest > 0 ? Math.max(2, (site.ms / longest) * 100) : 0}%` }}
+                      />
+                    </span>
+                    <span className="w-14 shrink-0 text-right font-mono text-[11px] tabular-nums text-ink">
+                      {formatDuration(site.ms)}
+                    </span>
+                    <span className="w-10 shrink-0 text-right font-mono text-[11px] tabular-nums text-faint">
+                      {total > 0 ? `${Math.round((site.ms / total) * 100)}%` : '—'}
+                    </span>
+                    <span
+                      aria-hidden="true"
+                      className="font-mono text-[11px] text-faint transition-transform group-open:rotate-90"
+                    >
+                      ›
+                    </span>
+                  </summary>
 
-                {item.titles.length === 0 ? (
-                  <p className="px-3 pb-2.5 text-[11px] text-faint">No window titles recorded.</p>
-                ) : (
-                  <ul className="flex flex-col gap-1 px-3 pb-2.5">
-                    {item.titles.map((entry) => (
-                      <li key={entry.title} className="flex items-center gap-3 text-[11px]">
-                        <span className="min-w-0 flex-1 truncate text-muted" title={entry.title}>
-                          {entry.title}
-                        </span>
-                        <span className="shrink-0 font-mono tabular-nums text-faint">
-                          {formatDuration(entry.seconds * 1000)}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </details>
-            </li>
-          ))}
-        </ul>
+                  {site.excluded ? (
+                    <p className="px-3 pb-2.5 text-[11px] text-faint">
+                      On the excluded list: only the time spent is recorded.
+                    </p>
+                  ) : site.pages.length === 0 ? (
+                    <p className="px-3 pb-2.5 text-[11px] text-faint">No pages recorded.</p>
+                  ) : (
+                    <ul className="flex flex-col gap-1 px-3 pb-2.5">
+                      {site.pages.map((page) => (
+                        <li
+                          key={page.url ?? page.title ?? ''}
+                          className="flex items-center gap-3 text-[11px]"
+                        >
+                          <span
+                            className="min-w-0 flex-1 truncate text-muted"
+                            title={page.url ?? page.title ?? ''}
+                          >
+                            {page.title ?? page.url ?? '(untitled)'}
+                          </span>
+                          <span className="shrink-0 font-mono tabular-nums text-faint">
+                            {formatDuration(page.ms)}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </details>
+              </li>
+            ))}
+          </ul>
+
+          {sites.length > SITES_SHOWN && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="self-start"
+              onClick={() => setAllSites(!allSites)}
+            >
+              {allSites ? 'Show fewer' : `Show all ${sites.length} sites`}
+            </Button>
+          )}
+        </>
       )}
 
-      {apps.length > APPS_SHOWN && (
-        <Button size="sm" variant="ghost" className="self-start" onClick={() => setShowAll(!showAll)}>
-          {showAll ? 'Show fewer' : `Show all ${apps.length} applications`}
-        </Button>
+      {searches.length > 0 && (
+        <div className="flex flex-col gap-1 rounded-xl border border-hairline bg-surface px-3 py-2.5">
+          <p className="text-[11px] font-medium uppercase tracking-wide text-faint">Searches</p>
+          <ul className="flex flex-col gap-1">
+            {shownSearches.map((search) => (
+              <li key={`${search.at}-${search.query}`} className="flex items-center gap-3 text-[11px]">
+                <span className="w-12 shrink-0 font-mono tabular-nums text-faint">
+                  {timeLabel(search.at)}
+                </span>
+                <span className="min-w-0 flex-1 truncate text-ink" title={search.query}>
+                  {search.query}
+                </span>
+                <span className="shrink-0 truncate text-faint">{search.domain}</span>
+              </li>
+            ))}
+          </ul>
+          {searches.length > SEARCHES_SHOWN && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="self-start"
+              onClick={() => setAllSearches(!allSearches)}
+            >
+              {allSearches ? 'Show fewer' : `Show all ${searches.length} searches`}
+            </Button>
+          )}
+        </div>
       )}
     </section>
   )

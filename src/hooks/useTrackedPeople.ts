@@ -11,7 +11,7 @@ export interface TrackedPeopleHandle {
   refresh: () => Promise<void>
   setPolicy: (
     userId: string,
-    patch: { trackingEnabled?: boolean; screenshotsEnabled?: boolean; appsEnabled?: boolean }
+    patch: { trackingEnabled?: boolean; screenshotsEnabled?: boolean; appsEnabled?: boolean; browserEnabled?: boolean }
   ) => Promise<void>
 }
 
@@ -47,7 +47,7 @@ export function useTrackedPeople(): TrackedPeopleHandle {
   const setPolicy = useCallback(
     async (
       userId: string,
-      patch: { trackingEnabled?: boolean; screenshotsEnabled?: boolean; appsEnabled?: boolean }
+      patch: { trackingEnabled?: boolean; screenshotsEnabled?: boolean; appsEnabled?: boolean; browserEnabled?: boolean }
     ) => {
       setBusy(userId)
       try {

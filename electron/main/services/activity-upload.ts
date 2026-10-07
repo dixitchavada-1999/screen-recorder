@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import type { ActivitySegment } from '@shared/types'
 import { logger } from '../lib/logger'
 import type { AppStretch } from './app-tracker'
+import type { BrowserVisit } from './browser-bridge'
 import { currentUser, getSupabase } from './auth'
 import { currentDeviceId } from './device'
 import { lastRecordedOwnerId } from './tracking-policy'
@@ -93,6 +94,7 @@ async function drain(): Promise<void> {
     await drainSegments(user.id)
     await drainIntervals(user.id)
     await drainApps(user.id)
+    await drainBrowser(user.id)
     await drainScreenshots(user.id)
   } catch (error) {
     logger.warn(SCOPE, 'Upload pass failed; will retry', error)
@@ -371,6 +373,91 @@ function parseApp(line: string, userId: string): AppRow | null {
       ended_at: row.endedAt,
       app_name: row.app,
       titles: Array.isArray(row.titles) ? row.titles : []
+    }
+  } catch {
+    return null
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/*                                   Browser                                  */
+/* -------------------------------------------------------------------------- */
+
+/** The same pass once more, over what the browser extension handed over. */
+async function drainBrowser(userId: string): Promise<void> {
+  const directory = activityDirectory()
+
+  let files: string[]
+  try {
+    files = (await readdir(directory)).filter(
+      (name) => name.startsWith('browser-') && name.endsWith('.jsonl')
+    )
+  } catch {
+    return
+  }
+
+  for (const file of files.sort()) {
+    const path = join(directory, file)
+    const offsetPath = `${path}.offset`
+
+    const content = await readFile(path, 'utf8')
+    const offset = await readOffset(offsetPath)
+
+    const end = content.lastIndexOf('\n')
+    if (end < 0 || end + 1 <= offset) continue
+
+    const rows = content
+      .slice(offset, end + 1)
+      .split('\n')
+      .filter((line) => line.trim().length > 0)
+      .map((line) => parseBrowser(line, userId))
+      .filter((row): row is BrowserRow => row !== null)
+
+    if (rows.length > 0) {
+      const { error } = await getSupabase()
+        .from('browser_activity')
+        .upsert(rows, {
+          onConflict: 'user_id,device_id,started_at,browser',
+          ignoreDuplicates: true
+        })
+
+      if (error) throw error
+      logger.info(SCOPE, 'Browser visits uploaded', { file, count: rows.length })
+    }
+
+    await writeFile(offsetPath, String(end + 1), 'utf8')
+  }
+}
+
+interface BrowserRow {
+  user_id: string
+  device_id: string | null
+  started_at: string
+  ended_at: string
+  browser: string
+  domain: string
+  url: string | null
+  title: string | null
+  search_query: string | null
+  excluded: boolean
+}
+
+function parseBrowser(line: string, userId: string): BrowserRow | null {
+  try {
+    const row = JSON.parse(line) as BrowserVisit
+    if (!row.startedAt || !row.endedAt || !row.domain) return null
+
+    return {
+      user_id: userId,
+      device_id: currentDeviceId(),
+      started_at: row.startedAt,
+      ended_at: row.endedAt,
+      browser: row.browser,
+      domain: row.domain,
+      url: row.url,
+      title: row.title,
+      search_query: row.search,
+      excluded: row.excluded === true
     }
   } catch {
     return null

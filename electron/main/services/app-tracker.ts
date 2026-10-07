@@ -7,6 +7,7 @@ import { promisify } from 'node:util'
 import { logger } from '../lib/logger'
 import type { ClockGap } from './clock-watchdog'
 import { clockWatchdog } from './clock-watchdog'
+import { isPrivateWindow } from './private-window'
 import { currentPolicy, trackingPolicy } from './tracking-policy'
 
 const SCOPE = 'app-tracker'
@@ -43,11 +44,6 @@ const MAX_TITLES = 5
 /** Longest title kept. Anything longer is a page that put its whole content up there. */
 const MAX_TITLE_LENGTH = 300
 
-/**
- * Titles that say the window is a private one. Its real title is replaced
- * before it is held anywhere — that is what private browsing is for.
- */
-const PRIVATE_WINDOW = /incognito|inprivate|private browsing|private window/i
 
 interface OpenStretch {
   app: string
@@ -247,6 +243,13 @@ async function readActiveWindow(): Promise<ActiveWindow | null> {
   const raw = await platformReader()?.()
   if (!raw) return null
 
+  /*
+   * A private browser window — Incognito, InPrivate — is not recorded at all:
+   * not its title, not the time. To the record it is as if nothing were in
+   * front, which is what private browsing asks for.
+   */
+  if (isPrivateWindow(raw.id, raw.owner?.path, raw.title)) return null
+
   const name = cleanAppName(raw.owner?.name, raw.owner?.path)
   if (!name) return null
 
@@ -254,6 +257,8 @@ async function readActiveWindow(): Promise<ActiveWindow | null> {
 }
 
 interface RawWindow {
+  /** The native window handle on Windows. */
+  id?: number
   title?: string
   owner?: { name?: string; path?: string }
 }
@@ -318,6 +323,5 @@ function cleanAppName(name?: string, path?: string): string | null {
 function cleanTitle(title?: string): string {
   const clean = (title ?? '').replace(/\s+/g, ' ').trim()
   if (!clean) return ''
-  if (PRIVATE_WINDOW.test(clean)) return '(private window)'
   return clean.slice(0, MAX_TITLE_LENGTH)
 }

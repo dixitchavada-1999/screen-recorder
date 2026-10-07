@@ -95,6 +95,14 @@ import {
 } from '../services/google-accounts'
 import { syncGoogleCalendars } from '../services/google-calendar'
 import { syncAhead } from '../services/google-sync'
+import {
+  addUntrackedDevice,
+  canManageUntrackedDevices,
+  listUntrackedDevices,
+  removeUntrackedDevices,
+  thisDevice
+} from '../services/untracked-devices'
+import { setUninstallPassword, uninstallPasswordInfo } from '../services/uninstall-password'
 import { readActivityDay } from '../services/activity-day'
 import { currentPolicy, refreshPolicy } from '../services/tracking-policy'
 import {
@@ -458,7 +466,7 @@ export function registerIpcHandlers(): void {
       async (
         _event: Electron.IpcMainInvokeEvent,
         userId: string,
-        patch: { trackingEnabled?: boolean; screenshotsEnabled?: boolean; appsEnabled?: boolean }
+        patch: { trackingEnabled?: boolean; screenshotsEnabled?: boolean; appsEnabled?: boolean; browserEnabled?: boolean }
       ): Promise<TrackedPerson> => {
         const person = await setTrackingPolicyFor(String(userId), patch)
 
@@ -489,6 +497,34 @@ export function registerIpcHandlers(): void {
         void refreshPolicy()
         return schedule
       }
+    )
+  )
+
+  /* --------------------------- Untracked devices --------------------------- */
+
+  ipcMain.handle(IPC.DEVICES_THIS, handled(SCOPE, () => thisDevice()))
+  ipcMain.handle(IPC.DEVICES_CAN_MANAGE, handled(SCOPE, () => canManageUntrackedDevices()))
+  ipcMain.handle(IPC.DEVICES_UNTRACKED_LIST, handled(SCOPE, () => listUntrackedDevices()))
+  ipcMain.handle(
+    IPC.DEVICES_UNTRACKED_ADD,
+    handled(
+      SCOPE,
+      (_event: Electron.IpcMainInvokeEvent, machineId: string, label: string | null) =>
+        addUntrackedDevice(String(machineId), typeof label === 'string' ? label : null)
+    )
+  )
+  ipcMain.handle(
+    IPC.DEVICES_UNTRACKED_REMOVE,
+    handled(SCOPE, (_event: Electron.IpcMainInvokeEvent, machineIds: string[]) =>
+      removeUntrackedDevices(Array.isArray(machineIds) ? machineIds.map(String) : [])
+    )
+  )
+
+  ipcMain.handle(IPC.UNINSTALL_PASSWORD_INFO, handled(SCOPE, () => uninstallPasswordInfo()))
+  ipcMain.handle(
+    IPC.UNINSTALL_PASSWORD_SET,
+    handled(SCOPE, (_event: Electron.IpcMainInvokeEvent, password: string) =>
+      setUninstallPassword(String(password))
     )
   )
 

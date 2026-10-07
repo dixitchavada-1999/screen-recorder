@@ -77,6 +77,8 @@ interface ProfileSnapshot {
 }
 
 let currentProfile: ProfileSnapshot | null = null
+/** Whose profile `currentProfile` is, so a re-read for the same person can keep it meanwhile. */
+let currentProfileOwner: string | null = null
 
 function sessionPath(): string {
   return join(app.getPath('userData'), SESSION_FILE)
@@ -120,6 +122,7 @@ function getClient(): SupabaseClient {
   // sign-out, or a background refresh an hour from now.
   client.auth.onAuthStateChange((event, session) => {
     currentSession = session
+    announceSignedIn()
     logger.debug(SCOPE, 'Auth state changed', { event, user: session?.user?.email ?? null })
 
     if (session?.refresh_token) {
@@ -135,6 +138,30 @@ function getClient(): SupabaseClient {
   })
 
   return client
+}
+
+/**
+ * Who wants to know when this machine becomes signed in or signed out.
+ *
+ * Only the yes/no, not who: the floating button and its tray entry exist only
+ * for a signed-in person, and that is all they ask.
+ */
+const signedInListeners = new Set<(signedIn: boolean) => void>()
+let announcedSignedIn = false
+
+/** Tells the listeners, but only when the answer actually changed. */
+function announceSignedIn(): void {
+  const signedIn = currentSession !== null
+  if (signedIn === announcedSignedIn) return
+  announcedSignedIn = signedIn
+
+  for (const listener of signedInListeners) {
+    try {
+      listener(signedIn)
+    } catch (error) {
+      logger.warn(SCOPE, 'A sign-in listener failed', error)
+    }
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -184,6 +211,7 @@ export async function restoreSession(): Promise<AuthUser | null> {
     }
 
     currentSession = data.session
+    announceSignedIn()
     await loadProfile(data.session.user.id)
 
     logger.info(SCOPE, 'Session restored', { role: currentProfile?.role })
@@ -227,6 +255,19 @@ export async function refreshAccount(): Promise<AuthUser | null> {
 
   await loadProfile(currentSession.user.id)
   return toAuthUser(currentSession)
+}
+
+/** Whether a session is held right now. */
+export function isSignedIn(): boolean {
+  return currentSession !== null
+}
+
+/** Calls `listener` each time this machine signs in or out. Returns the unsubscribe. */
+export function onSignedInChange(listener: (signedIn: boolean) => void): () => void {
+  signedInListeners.add(listener)
+  return () => {
+    signedInListeners.delete(listener)
+  }
 }
 
 /** The signed-in account without touching the network, or `null`. */
@@ -349,6 +390,7 @@ export async function signIn({ email, password }: SignInInput): Promise<AuthUser
   }
 
   currentSession = data.session
+  announceSignedIn()
   setDeviceId(payload.device_id ?? null)
   await loadProfile(data.session.user.id)
 
@@ -413,6 +455,7 @@ export async function applyAuthCallback(rawUrl: string): Promise<AuthUser | null
   if (error || !data.session) throw translateAuthError(error ?? { message: 'Link expired.' })
 
   currentSession = data.session
+  announceSignedIn()
   await loadProfile(data.session.user.id)
 
   logger.info(SCOPE, 'Signed in from a link', { type: fragment.get('type') })
@@ -465,7 +508,9 @@ export async function signOut(): Promise<void> {
 /** Everything this process knows about who is signed in, dropped together. */
 function forgetSession(): void {
   currentSession = null
+  announceSignedIn()
   currentProfile = null
+  currentProfileOwner = null
   setDeviceId(null)
 }
 
@@ -549,9 +594,20 @@ function toAuthUser(session: Session): AuthUser {
  * Any failure — no row yet, no network — leaves the role at `user` and the name
  * falling back to the address. Guessing upwards would hand out privileges on an
  * error.
+ *
+ * A re-read for the person already signed in keeps the profile it has until
+ * the new one is in. It used to be cleared first, and for the length of the
+ * round trip everything else read nobody's profile: the quick panel refreshes
+ * the account each time it gains focus while reading today's calls, so every
+ * call went missing from it — none counted as "mine" without a Nexus id.
  */
 async function loadProfile(userId: string): Promise<void> {
-  currentProfile = null
+  if (currentProfileOwner !== userId) {
+    currentProfile = null
+    currentProfileOwner = null
+  }
+
+  let next: ProfileSnapshot | null = null
 
   try {
     const { data, error } = await getClient()
@@ -581,7 +637,7 @@ async function loadProfile(userId: string): Promise<void> {
       ? grant.permissions
       : await applyOverrides(userId, grant.permissions)
 
-    currentProfile = {
+    next = {
       role: roleKey === 'super_admin' ? 'super_admin' : roleKey === 'admin' ? 'admin' : 'user',
       roleKey,
       roleLabel: grant.label,
@@ -593,6 +649,10 @@ async function loadProfile(userId: string): Promise<void> {
     }
   } catch (error) {
     logger.warn(SCOPE, 'Profile lookup failed', error)
+  } finally {
+    // Swapped in one step, and on a failure dropped exactly as before.
+    currentProfile = next
+    currentProfileOwner = next ? userId : null
   }
 }
 

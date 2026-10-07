@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "Screen Recorder – Browser Activity",
+  "short_name": "Browser Activity",
+  "version": "1.0.0",
+  "description": "Reports which website tabs are open and searched to the Screen Recorder desktop app on this computer, when your organisation has switched it on.",
+  "minimum_chrome_version": "120",
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "permissions": ["tabs", "idle", "storage", "alarms"],
+  "host_permissions": ["http://127.0.0.1:39218/*"],
+  "incognito": "not_allowed",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "action": {
+    "default_title": "Browser activity — managed by your organisation",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png"
+    }
+  }
+}

@@ -176,19 +176,26 @@ export interface TrackingPolicy {
   /** Whether this person's machine records activity at all. */
   trackingEnabled: boolean
   /**
-   * Whether screenshots are taken while it does. Always false when tracking is
-   * off — the schedule they hang off is not running.
+   * Whether screenshots are taken. A switch of its own: on with Activity off
+   * means pictures and nothing else.
    */
   screenshotsEnabled: boolean
   /**
    * Whether the application in front and its window title are recorded.
-   * Always false when tracking is off.
+   * Part of Activity: always equal to `trackingEnabled`.
    */
   appsEnabled: boolean
+  /**
+   * Whether browser tabs, addresses and searches are kept. Part of Activity:
+   * always equal to `trackingEnabled`.
+   */
+  browserEnabled: boolean
   /** Minutes between screenshots, and the length of each input-count window. */
   screenshotIntervalMinutes: number
   /** Seconds without keyboard or mouse before the machine counts as idle. */
   idleAfterSeconds: number
+  /** Sites recorded only by name and time — no address, title or search. */
+  excludedDomains: string[]
 }
 
 /**
@@ -200,6 +207,34 @@ export interface TrackingPolicy {
 export interface TrackingSchedule {
   screenshotIntervalMinutes: number
   idleAfterSeconds: number
+  /** Sites the browser extension records only by name and time. Subdomains included. */
+  excludedDomains: string[]
+}
+
+/** This installation, as its Settings screen shows it. */
+export interface ThisDevice {
+  /** The id it generated the first time it ran. What goes on the untracked list. */
+  machineId: string
+  hostname: string
+}
+
+/** What Settings shows about the uninstall password. Never the password itself. */
+export interface UninstallPasswordInfo {
+  /** When it was last set from Settings; null when only the installer's applies. */
+  updatedAt: string | null
+}
+
+/** An installation on the untracked list, with what is known about it. */
+export interface UntrackedDevice {
+  machineId: string
+  label: string | null
+  addedAt: string
+  /** From the people who have signed in on it; null when nobody has yet. */
+  hostname: string | null
+  platform: string | null
+  /** Who has used it, comma-joined. */
+  people: string | null
+  lastSeenAt: string | null
 }
 
 /** One person as the admin panel lists them, with their policy. */
@@ -219,6 +254,7 @@ export interface TrackedPerson {
   trackingEnabled: boolean
   screenshotsEnabled: boolean
   appsEnabled: boolean
+  browserEnabled: boolean
 }
 
 /* -------------------------------------------------------------------------- */
@@ -468,6 +504,62 @@ export interface ActivityDay {
    * tracking was off — the caller tells that apart by the person's switch.
    */
   apps: AppUsageSummary[]
+  /** What the browser extension recorded. Empty when browser tracking was off. */
+  browser: BrowserDaySummary
+  /**
+   * The application stretches as recorded, oldest first. The summary above is
+   * built from these; they are kept so a stretch of the day — the minutes
+   * before one screenshot — can be answered on its own.
+   */
+  appStretches: AppStretchRecord[]
+  /** The browser visits as recorded, oldest first. Same reason. */
+  browserVisits: BrowserVisitRecord[]
+}
+
+export interface AppStretchRecord {
+  startedAt: string
+  endedAt: string
+  app: string
+  titles: AppWindowTitle[]
+}
+
+export interface BrowserVisitRecord {
+  startedAt: string
+  endedAt: string
+  domain: string
+  url: string | null
+  title: string | null
+  search: string | null
+  excluded: boolean
+}
+
+export interface BrowserDaySummary {
+  /** Time per site, longest first. */
+  sites: BrowserSiteSummary[]
+  /** Every search, oldest first. */
+  searches: BrowserSearch[]
+}
+
+export interface BrowserSiteSummary {
+  domain: string
+  ms: number
+  /** True for a site on the excluded list: only its name and time are known. */
+  excluded: boolean
+  /** The longest-viewed pages on it, longest first. Empty for an excluded site. */
+  pages: BrowserPage[]
+}
+
+export interface BrowserPage {
+  title: string | null
+  url: string | null
+  ms: number
+}
+
+export interface BrowserSearch {
+  at: string
+  query: string
+  /** The site it was typed into: google.com, youtube.com. */
+  domain: string
 }
 
 /** One application's share of a day, with the window titles that made it up. */
@@ -519,12 +611,19 @@ export interface TranscriptSettings {
   model: WhisperModelKey
 }
 
+/** The round button on the desktop that opens the quick panel. */
+export interface FloatingButtonSettings {
+  /** Its background colour, as `#rrggbb`. */
+  color: string
+}
+
 export interface AppSettings {
   video: VideoSettings
   audio: AudioSettings
   storage: StorageSettings
   notifications: NotificationSettings
   startup: StartupSettings
+  floatingButton: FloatingButtonSettings
   shortcuts: ShortcutSettings
   transcript: TranscriptSettings
   tracking: TrackingSettings

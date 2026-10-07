@@ -41,6 +41,13 @@ Thumbs.db
 # The release key. Writes to every table and bucket — never commit it.
 .env.release
 
+# The uninstall password's hash. Built into the installer, never committed.
+build/uninstall-password.json
+
+# Copies of the docs with live secrets filled in (the Tasks API key).
+*.private.md
+*.private.postman_collection.json
+
 # Supabase CLI working state — machine-local, not part of the schema
 supabase/.temp/
 

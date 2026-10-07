@@ -56,6 +56,15 @@ export const IPC = {
   TRACKING_SCHEDULE: 'tracking:schedule',
   TRACKING_SET_SCHEDULE: 'tracking:set-schedule',
 
+  /* Untracked devices */
+  DEVICES_THIS: 'devices:this',
+  DEVICES_CAN_MANAGE: 'devices:can-manage',
+  DEVICES_UNTRACKED_LIST: 'devices:untracked-list',
+  DEVICES_UNTRACKED_ADD: 'devices:untracked-add',
+  DEVICES_UNTRACKED_REMOVE: 'devices:untracked-remove',
+  UNINSTALL_PASSWORD_INFO: 'devices:uninstall-password-info',
+  UNINSTALL_PASSWORD_SET: 'devices:uninstall-password-set',
+
   /* Call manager */
   /** The people a call can be scheduled for — this app's cache of the roster. */
   /** KPI notes: what is on my dashboard, and — for an admin — putting it there. */
@@ -167,6 +176,22 @@ export const IPC = {
    */
   WINDOW_EXCLUDE_FROM_CAPTURE: 'window:exclude-from-capture',
 
+  /* Floating button — its own tiny window, with its own preload */
+  /** The button was clicked (pressed and released without moving). */
+  FLOATING_CLICK: 'floating:click',
+  /** The pointer went down on the button and has started to move it. */
+  FLOATING_DRAG_START: 'floating:drag-start',
+  /** The pointer moved while dragging; main reads the cursor itself. */
+  FLOATING_DRAG_MOVE: 'floating:drag-move',
+  /** The drag finished, so the button can be tucked back on screen. */
+  FLOATING_DRAG_END: 'floating:drag-end',
+
+  /* Quick panel — the side panel the floating button opens */
+  /** The panel asking to be put away (Escape, or after opening the app). */
+  PANEL_HIDE: 'panel:hide',
+  /** Opens the app window, optionally on one section of the account area. */
+  PANEL_OPEN_APP: 'panel:open-app',
+
   /* Updates */
   /** Asks the update server whether there is a newer version. */
   UPDATE_CHECK: 'update:check',
@@ -188,6 +213,8 @@ export const IPC = {
   EVENT_WINDOW_SHOWN: 'event:window-shown',
   /** The tray asking the window to land somewhere in particular. */
   EVENT_OPEN_SECTION: 'event:open-section',
+  /** The quick panel is sliding in, so it re-reads what it shows. */
+  EVENT_PANEL_SHOWN: 'event:panel-shown',
   /** Fires when what the signed-in account may do has changed. */
   EVENT_ACCOUNT_CHANGED: 'event:account-changed',
   /** A session arrived from outside the window, e.g. an email confirmation link. */

@@ -47,6 +47,8 @@ export function TrackingPolicyDialog({
   const [schedule, setSchedule] = useState<TrackingSchedule | null>(null)
   const [error, setError] = useState<SerializedError | null>(null)
   const [saving, setSaving] = useState(false)
+  /** The excluded sites as typed, one per line, until saved. */
+  const [excludedDraft, setExcludedDraft] = useState('')
 
   // Read fresh each time it opens: somebody else may have changed it since.
   useEffect(() => {
@@ -58,6 +60,7 @@ export function TrackingPolicyDialog({
         const loaded = await unwrap(window.api.tracking.schedule())
         if (cancelled) return
         setSchedule(loaded)
+        setExcludedDraft(loaded.excludedDomains.join('\n'))
         setError(null)
       } catch (caught) {
         if (!cancelled) setError(toSerializedError(caught))
@@ -77,7 +80,10 @@ export function TrackingPolicyDialog({
     setSaving(true)
 
     try {
-      setSchedule(await unwrap(window.api.tracking.setSchedule(patch)))
+      const saved = await unwrap(window.api.tracking.setSchedule(patch))
+      setSchedule(saved)
+      // The server cleans what was typed; show what it kept.
+      setExcludedDraft(saved.excludedDomains.join('\n'))
       push({
         tone: 'success',
         title: 'Tracking schedule saved',
@@ -160,6 +166,40 @@ export function TrackingPolicyDialog({
                 disabled={!canManage || saving}
                 onValueChange={(idleAfterSeconds) => void save({ idleAfterSeconds })}
               />
+            </Field>
+
+            <Field
+              label="Sites never recorded in detail"
+              htmlFor="policy-excluded"
+              hint="One per line, such as hdfcbank.com. The browser extension records only the site's name and the time spent there — no address, title or search. Subdomains are included."
+            >
+              <textarea
+                id="policy-excluded"
+                rows={5}
+                value={excludedDraft}
+                disabled={!canManage || saving}
+                onChange={(event) => setExcludedDraft(event.target.value)}
+                placeholder={'hdfcbank.com\nicicibank.com\npracto.com'}
+                className="selectable w-full resize-y rounded-xl border border-hairline bg-surface px-3 py-2 font-mono text-xs leading-relaxed text-ink transition-colors hover:border-faint focus:border-accent disabled:cursor-not-allowed disabled:opacity-50"
+              />
+              {canManage && excludedDraft !== schedule.excludedDomains.join('\n') && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  className="mt-2"
+                  loading={saving}
+                  onClick={() =>
+                    void save({
+                      excludedDomains: excludedDraft
+                        .split(/[\s,]+/)
+                        .map((entry) => entry.trim())
+                        .filter(Boolean)
+                    })
+                  }
+                >
+                  Save sites
+                </Button>
+              )}
             </Field>
 
             <p className="rounded-xl border border-hairline bg-surface px-3 py-2.5 text-xs leading-relaxed text-muted">

@@ -11,6 +11,7 @@ import {
   sessionRestoreAttempted,
   signOut
 } from './auth'
+import { getMachineId } from './device'
 
 const SCOPE = 'tracking-policy'
 
@@ -61,8 +62,19 @@ const OFF: TrackingPolicy = {
   trackingEnabled: false,
   screenshotsEnabled: false,
   appsEnabled: false,
+  browserEnabled: false,
   screenshotIntervalMinutes: DEFAULT_INTERVAL_MINUTES,
-  idleAfterSeconds: DEFAULT_IDLE_SECONDS
+  idleAfterSeconds: DEFAULT_IDLE_SECONDS,
+  excludedDomains: []
+}
+
+/** The excluded sites as a clean list of lower-case hosts. Anything else is dropped. */
+function domains(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return []
+  return raw
+    .filter((item): item is string => typeof item === 'string')
+    .map((item) => item.trim().toLowerCase().replace(/^www\./, ''))
+    .filter((item) => item.length > 0 && item.length <= 255)
 }
 
 /**
@@ -97,6 +109,9 @@ let timer: NodeJS.Timeout | null = null
  * cold boot begins and where the remembered answer is worth having.
  */
 let confirmed = false
+
+/** Whether the server last said this installation is untracked; for the log only. */
+let deviceUntracked = false
 
 /** Keeps the fallback from repeating itself in the log every couple of minutes. */
 let announcedFallback = false
@@ -153,8 +168,10 @@ export async function refreshPolicy(): Promise<void> {
     next.trackingEnabled !== current.trackingEnabled ||
     next.screenshotsEnabled !== current.screenshotsEnabled ||
     next.appsEnabled !== current.appsEnabled ||
+    next.browserEnabled !== current.browserEnabled ||
     next.screenshotIntervalMinutes !== current.screenshotIntervalMinutes ||
-    next.idleAfterSeconds !== current.idleAfterSeconds
+    next.idleAfterSeconds !== current.idleAfterSeconds ||
+    next.excludedDomains.join(',') !== current.excludedDomains.join(',')
 
   current = next
   if (!changed) return
@@ -217,7 +234,11 @@ async function read(): Promise<TrackingPolicy> {
      * failing: a machine that keeps sampling, keeps photographing and keeps
      * being turned away is worse than one that admits what has happened.
      */
-    const { data, error } = await getSupabase().rpc('my_status')
+    // Which installation is asking: a device on the untracked list is told
+    // every switch is off, whoever is signed in on it.
+    const { data, error } = await getSupabase().rpc('my_status', {
+      p_machine: await getMachineId()
+    })
 
     if (error) throw error
 
@@ -226,8 +247,21 @@ async function read(): Promise<TrackingPolicy> {
       tracking_enabled?: boolean | null
       screenshots_enabled?: boolean | null
       apps_enabled?: boolean | null
+      device_untracked?: boolean | null
+      browser_enabled?: boolean | null
       screenshot_interval_minutes?: number | null
       idle_after_seconds?: number | null
+      excluded_domains?: unknown
+    }
+
+    if ((row.device_untracked === true) !== deviceUntracked) {
+      deviceUntracked = row.device_untracked === true
+      logger.info(
+        SCOPE,
+        deviceUntracked
+          ? 'This device is on the untracked list; nothing will be recorded on it'
+          : 'This device is no longer on the untracked list'
+      )
     }
 
     if (row.active === false) {
@@ -249,9 +283,12 @@ async function read(): Promise<TrackingPolicy> {
       // Screenshots without tracking is not a state that means anything: the
       // schedule they hang off is not running. Folding it in here keeps every
       // caller from having to remember that.
-      screenshotsEnabled: trackingEnabled && row.screenshots_enabled === true,
+      // Its own switch: screenshots can run with Activity off.
+      screenshotsEnabled: row.screenshots_enabled === true,
       appsEnabled: trackingEnabled && row.apps_enabled === true,
-      ...schedule({ interval: row.screenshot_interval_minutes, idle: row.idle_after_seconds })
+      browserEnabled: trackingEnabled && row.browser_enabled === true,
+      ...schedule({ interval: row.screenshot_interval_minutes, idle: row.idle_after_seconds }),
+      excludedDomains: domains(row.excluded_domains)
     }
 
     confirmed = true
@@ -307,8 +344,10 @@ function withoutOwner(remembered: CachedPolicy): TrackingPolicy {
     trackingEnabled: remembered.trackingEnabled,
     screenshotsEnabled: remembered.screenshotsEnabled,
     appsEnabled: remembered.appsEnabled,
+    browserEnabled: remembered.browserEnabled,
     screenshotIntervalMinutes: remembered.screenshotIntervalMinutes,
-    idleAfterSeconds: remembered.idleAfterSeconds
+    idleAfterSeconds: remembered.idleAfterSeconds,
+    excludedDomains: remembered.excludedDomains
   }
 }
 
@@ -375,10 +414,12 @@ async function readCache(): Promise<CachedPolicy | null> {
       userId: cached.userId,
       savedAt: cached.savedAt,
       trackingEnabled,
-      screenshotsEnabled: trackingEnabled && cached.screenshotsEnabled === true,
+      screenshotsEnabled: cached.screenshotsEnabled === true,
       // Absent from a file written by an older build, which never recorded them.
       appsEnabled: trackingEnabled && cached.appsEnabled === true,
-      ...schedule({ interval: cached.screenshotIntervalMinutes, idle: cached.idleAfterSeconds })
+      browserEnabled: trackingEnabled && cached.browserEnabled === true,
+      ...schedule({ interval: cached.screenshotIntervalMinutes, idle: cached.idleAfterSeconds }),
+      excludedDomains: domains(cached.excludedDomains)
     }
   } catch {
     // Never written, or unreadable. Both mean there is nothing to remember.

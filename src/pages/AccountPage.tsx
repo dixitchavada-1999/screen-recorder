@@ -3,6 +3,8 @@ import type { ReactNode } from 'react'
 import type { KpiNote, McpServerStatus, UserRole } from '@shared/types'
 import { REMINDER_LEAD_OPTIONS } from '@shared/presets'
 import { Avatar } from '@/components/AuthDialog'
+import { DeviceSettings } from '@/components/DeviceSettings'
+import { FloatingButtonSettings } from '@/components/FloatingButtonSettings'
 import { GoogleAccounts } from '@/components/GoogleAccounts'
 import { KpiDialog } from '@/components/KpiDialog'
 import { UpdateBanner } from '@/components/UpdateBanner'
@@ -616,8 +618,14 @@ function AccountSettings({ currentName }: { currentName: string }): React.JSX.El
         </p>
       </Card>
 
+      {/* ------------------------------ Devices ----------------------------- */}
+      <DeviceSettings />
+
       {/* ------------------------------ Window ------------------------------ */}
       <WindowSettings />
+
+      {/* -------------------------- Floating button ------------------------- */}
+      <FloatingButtonSettings />
 
       {/* --------------------------- Notifications -------------------------- */}
       <CallReminderSettings />
@@ -680,7 +688,7 @@ function WindowSettings(): React.JSX.Element {
 function CallReminderSettings(): React.JSX.Element {
   const { settings, updateSettings } = useSettings()
 
-  if (!settings) return <Card title="Call reminders">{null}</Card>
+  if (!settings) return <Card title="Call reminders" collapsible>{null}</Card>
 
   const { notifications } = settings
   const patch = (change: Partial<typeof notifications>): void => {
@@ -702,7 +710,7 @@ function CallReminderSettings(): React.JSX.Element {
     !notifications.inAppNotifications
 
   return (
-    <Card title="Call reminders" description="Warnings before a scheduled call starts">
+    <Card title="Call reminders" description="Warnings before a scheduled call starts" collapsible>
       <Toggle
         checked={notifications.enabled}
         onCheckedChange={(enabled) => patch({ enabled })}
@@ -833,6 +841,7 @@ function McpServerSettings(): React.JSX.Element {
 
   return (
     <Card
+      collapsible
       title="AI Call Assistant"
       description="Schedule, list and cancel your own calls by talking to Claude instead of the form above."
       actions={

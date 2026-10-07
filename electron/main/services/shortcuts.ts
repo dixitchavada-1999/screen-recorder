@@ -1,7 +1,8 @@
-import { BrowserWindow, globalShortcut } from 'electron'
+import { globalShortcut } from 'electron'
 import { IPC } from '@shared/ipc'
 import type { RecorderStateSync, TrayCommand } from '@shared/types'
 import { logger } from '../lib/logger'
+import { getMainWindow } from '../window'
 import { settingsStore } from './settings-store'
 
 const SCOPE = 'shortcuts'
@@ -124,7 +125,7 @@ function toggleRecording(): void {
  * being hidden, so this works with nothing on screen.
  */
 function send(command: TrayCommand): void {
-  const [window] = BrowserWindow.getAllWindows()
+  const window = getMainWindow()
 
   if (!window || window.isDestroyed()) {
     logger.warn(SCOPE, 'Shortcut ignored, no window is available', { command })

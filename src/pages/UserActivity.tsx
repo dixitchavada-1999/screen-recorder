@@ -73,7 +73,7 @@ export function UserActivity(): React.JSX.Element {
 
   const change = async (
     person: TrackedPerson,
-    patch: { trackingEnabled?: boolean; screenshotsEnabled?: boolean; appsEnabled?: boolean },
+    patch: { trackingEnabled?: boolean; screenshotsEnabled?: boolean; appsEnabled?: boolean; browserEnabled?: boolean },
     what: string
   ): Promise<void> => {
     try {
@@ -93,7 +93,7 @@ export function UserActivity(): React.JSX.Element {
     <div className="flex flex-col gap-4">
       <Card
         title="User activity"
-        description="Who is tracked, and what their day looked like. Switching these writes to the person's account — their machine picks it up within a couple of minutes. Apps records the application in front and its window title, never what is typed."
+        description="Who is tracked, and what their day looked like. Switching these writes to the person's account — their machine picks it up within a couple of minutes. Activity records active and idle time, key and click counts, the applications used and browser tabs and searches — never what is typed. Screenshots takes pictures of the screen, and works with or without Activity."
         actions={
           <Button size="sm" variant="ghost" onClick={() => setPolicyOpen(true)}>
             Tracking settings
@@ -116,7 +116,7 @@ export function UserActivity(): React.JSX.Element {
                 key={person.id}
                 className={cn(
                   'flex flex-wrap items-center gap-3 rounded-xl border px-3 py-2.5',
-                  person.trackingEnabled
+                  person.trackingEnabled || person.screenshotsEnabled
                     ? 'border-warning/40 bg-warning/5'
                     : 'border-hairline bg-surface'
                 )}
@@ -126,7 +126,7 @@ export function UserActivity(): React.JSX.Element {
                     aria-hidden="true"
                     className={cn(
                       'size-2 shrink-0 rounded-full',
-                      person.trackingEnabled ? 'bg-warning' : 'bg-faint'
+                      person.trackingEnabled || person.screenshotsEnabled ? 'bg-warning' : 'bg-faint'
                     )}
                   />
                   <div className="min-w-0">
@@ -136,45 +136,32 @@ export function UserActivity(): React.JSX.Element {
                 </div>
 
                 <div className="flex shrink-0 flex-wrap items-center gap-4">
+                  {/* Everything about how the machine is used: active and idle
+                      time, key and click counts, applications, browser tabs. */}
                   <Toggle
-                    label="Tracking"
+                    label="Activity"
                     checked={person.trackingEnabled}
                     disabled={busy === person.id || !managesTracking}
                     onCheckedChange={(trackingEnabled) =>
                       void change(
                         person,
                         { trackingEnabled },
-                        trackingEnabled ? 'Tracking on' : 'Tracking off'
+                        trackingEnabled ? 'Activity tracking on' : 'Activity tracking off'
                       )
                     }
                   />
 
-                  {/* Meaningless without tracking, and the server clears it
-                      anyway — so it is disabled rather than quietly ignored. */}
+                  {/* Pictures of the screen and nothing else. Independent of
+                      Activity: either can be on without the other. */}
                   <Toggle
                     label="Screenshots"
                     checked={person.screenshotsEnabled}
-                    disabled={busy === person.id || !person.trackingEnabled || !managesTracking}
+                    disabled={busy === person.id || !managesTracking}
                     onCheckedChange={(screenshotsEnabled) =>
                       void change(
                         person,
                         { screenshotsEnabled },
                         screenshotsEnabled ? 'Screenshots on' : 'Screenshots off'
-                      )
-                    }
-                  />
-
-                  {/* The application in front and its window title. Hangs off
-                      tracking the same way screenshots do. */}
-                  <Toggle
-                    label="Apps"
-                    checked={person.appsEnabled}
-                    disabled={busy === person.id || !person.trackingEnabled || !managesTracking}
-                    onCheckedChange={(appsEnabled) =>
-                      void change(
-                        person,
-                        { appsEnabled },
-                        appsEnabled ? 'Application tracking on' : 'Application tracking off'
                       )
                     }
                   />

@@ -88,6 +88,14 @@ export function TrackingConsentDialog({
           private or incognito windows.
         </Item>
 
+        <Item label="Browser">
+          If an administrator has switched it on for your account, a browser extension installed
+          in Chrome and Edge records the tabs you look at — the site, the page address and title,
+          and what you search for — while you are at the keyboard. Sites your organisation has
+          excluded are recorded only by name and time. Not what you type into pages, not their
+          contents, and nothing from incognito or InPrivate windows.
+        </Item>
+
         <Item label="When it runs">
           From the moment the system starts until it shuts down. Not while the machine is off,
           and not after you switch tracking off here.

@@ -277,13 +277,20 @@ export function createMainWindow(options: CreateWindowOptions = {}): BrowserWind
   return window
 }
 
-function loadRenderer(window: BrowserWindow): void {
+/**
+ * Loads the renderer bundle into a window.
+ *
+ * `view` picks a different root inside the same bundle (read from the query
+ * string in `src/main.tsx`) — the quick panel is one. Dev tools only open for
+ * the app window; one detached inspector per window would be noise.
+ */
+export function loadRenderer(window: BrowserWindow, view?: string): void {
   const devServerUrl = process.env['ELECTRON_RENDERER_URL']
 
   if (devServerUrl) {
-    void window.loadURL(devServerUrl)
-    window.webContents.openDevTools({ mode: 'detach' })
+    void window.loadURL(view ? `${devServerUrl}?view=${encodeURIComponent(view)}` : devServerUrl)
+    if (!view) window.webContents.openDevTools({ mode: 'detach' })
   } else {
-    void window.loadFile(join(__dirname, '../renderer/index.html'))
+    void window.loadFile(join(__dirname, '../renderer/index.html'), view ? { query: { view } } : {})
   }
 }

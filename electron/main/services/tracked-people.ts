@@ -22,9 +22,11 @@ interface ProfileRow {
   tracking_enabled: boolean | null
   screenshots_enabled: boolean | null
   apps_enabled: boolean | null
+  browser_enabled: boolean | null
 }
 
-const COLUMNS = 'id, email, full_name, role, tracking_enabled, screenshots_enabled, apps_enabled'
+const COLUMNS =
+  'id, email, full_name, role, tracking_enabled, screenshots_enabled, apps_enabled, browser_enabled'
 
 export async function listTrackedPeople(): Promise<TrackedPerson[]> {
   requirePermission('team.view', 'see the team')
@@ -48,23 +50,25 @@ export async function listTrackedPeople(): Promise<TrackedPerson[]> {
  */
 export async function setTrackingPolicyFor(
   userId: string,
-  patch: { trackingEnabled?: boolean; screenshotsEnabled?: boolean; appsEnabled?: boolean }
+  patch: {
+    trackingEnabled?: boolean
+    screenshotsEnabled?: boolean
+    appsEnabled?: boolean
+    browserEnabled?: boolean
+  }
 ): Promise<TrackedPerson> {
   requirePermission('team.manage', 'change the tracking policy')
 
   const update: Record<string, boolean> = {}
+  // Activity is all of it: applications and browser follow the one switch.
+  // Screenshots are separate and left as they are. The server enforces both.
   if (patch.trackingEnabled !== undefined) {
     update.tracking_enabled = patch.trackingEnabled
-    if (!patch.trackingEnabled) {
-      update.screenshots_enabled = false
-      update.apps_enabled = false
-    }
+    update.apps_enabled = patch.trackingEnabled
+    update.browser_enabled = patch.trackingEnabled
   }
   if (patch.screenshotsEnabled !== undefined) {
     update.screenshots_enabled = patch.screenshotsEnabled
-  }
-  if (patch.appsEnabled !== undefined) {
-    update.apps_enabled = patch.appsEnabled
   }
 
   const { data, error } = await getSupabase()
@@ -105,7 +109,7 @@ export async function readTrackingSchedule(): Promise<TrackingSchedule> {
 
   const { data, error } = await getSupabase()
     .from('tracking_schedule')
-    .select('screenshot_interval_minutes, idle_after_seconds')
+    .select('screenshot_interval_minutes, idle_after_seconds, excluded_domains')
     .eq('id', true)
     .single()
 
@@ -123,12 +127,15 @@ export async function setTrackingSchedule(patch: Partial<TrackingSchedule>): Pro
   if (patch.idleAfterSeconds !== undefined) {
     update.idle_after_seconds = Math.round(Number(patch.idleAfterSeconds))
   }
+  if (patch.excludedDomains !== undefined) {
+    update.excluded_domains = cleanDomains(patch.excludedDomains)
+  }
 
   const { data, error } = await getSupabase()
     .from('tracking_schedule')
     .update(update)
     .eq('id', true)
-    .select('screenshot_interval_minutes, idle_after_seconds')
+    .select('screenshot_interval_minutes, idle_after_seconds, excluded_domains')
     .single()
 
   if (error) throw translate(error, 'change the tracking schedule')
@@ -140,13 +147,39 @@ export async function setTrackingSchedule(patch: Partial<TrackingSchedule>): Pro
 interface ScheduleRow {
   screenshot_interval_minutes: number
   idle_after_seconds: number
+  excluded_domains: string[] | null
 }
 
 function toSchedule(row: ScheduleRow): TrackingSchedule {
   return {
     screenshotIntervalMinutes: row.screenshot_interval_minutes,
-    idleAfterSeconds: row.idle_after_seconds
+    idleAfterSeconds: row.idle_after_seconds,
+    excludedDomains: row.excluded_domains ?? []
   }
+}
+
+/**
+ * Bare hosts, lower case, without a scheme, path or "www.", and no repeats —
+ * whatever was pasted in. `https://www.HDFCBank.com/login` becomes
+ * `hdfcbank.com`.
+ */
+function cleanDomains(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return []
+
+  const cleaned = raw
+    .filter((item): item is string => typeof item === 'string')
+    .map((item) =>
+      item
+        .trim()
+        .toLowerCase()
+        .replace(/^[a-z]+:\/\//, '')
+        .replace(/[/?#].*$/, '')
+        .replace(/:\d+$/, '')
+        .replace(/^www\./, '')
+    )
+    .filter((item) => /^[a-z0-9.-]+\.[a-z]{2,}$/.test(item))
+
+  return [...new Set(cleaned)].slice(0, 200)
 }
 
 function requirePermission(permission: string, what: string): void {
@@ -178,7 +211,8 @@ function toPerson(row: ProfileRow): TrackedPerson {
     roleKey: row.role,
     trackingEnabled: row.tracking_enabled === true,
     screenshotsEnabled: row.screenshots_enabled === true,
-    appsEnabled: row.apps_enabled === true
+    appsEnabled: row.apps_enabled === true,
+    browserEnabled: row.browser_enabled === true
   }
 }
 

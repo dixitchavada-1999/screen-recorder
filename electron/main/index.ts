@@ -4,6 +4,10 @@ import { registerIpcHandlers } from './ipc/register'
 import { logger } from './lib/logger'
 import { initActivityTracker, stopActivityTracker } from './services/activity-tracker'
 import { initAppTracker, stopAppTracker } from './services/app-tracker'
+import { UNINSTALL_GUARD_FLAG, runUninstallGuard } from './uninstall-guard'
+import { startUninstallPasswordSync } from './services/uninstall-password'
+import { startBrowserBridge, stopBrowserBridge } from './services/browser-bridge'
+import { ensureBrowserExtensionPolicy } from './services/browser-policy'
 import { startActivityUpload, stopActivityUpload } from './services/activity-upload'
 import { startClockWatchdog, stopClockWatchdog } from './services/clock-watchdog'
 import { initInputCounter, stopInputCounter } from './services/input-counter'
@@ -33,6 +37,8 @@ import { cancelActiveTranscode } from './services/transcoder'
 import { startAccountWatch, stopAccountWatch } from './services/account-watch'
 import { applyShortcuts, releaseShortcuts } from './services/shortcuts'
 import { createTray, destroyTray } from './services/tray'
+import { startFloatingButton, stopFloatingButton } from './services/floating-button'
+import { startQuickPanel, stopQuickPanel } from './services/quick-panel'
 import {
   applyTaskbarVisibility,
   createMainWindow,
@@ -48,16 +54,38 @@ const SCOPE = 'main'
 /* -------------------------------------------------------------------------- */
 
 // Two instances would fight over the same intermediate files and settings.
-if (!app.requestSingleInstanceLock()) {
+if (process.argv.includes(UNINSTALL_GUARD_FLAG)) {
+  // Started by the uninstaller to ask for its password, and nothing else.
+  runUninstallGuard()
+} else if (!app.isPackaged && !app.requestSingleInstanceLock({ devRestart: true })) {
+  // Development only: an old `npm run dev` still running in the tray holds the
+  // lock, and would otherwise swallow this launch and keep running stale code.
+  // It has been asked to quit (see `second-instance`); take over once it has.
+  void takeOverFromOldDevInstance()
+} else if (app.isPackaged && !app.requestSingleInstanceLock()) {
   app.quit()
 } else {
+  listenForSecondInstances()
+  bootstrap()
+}
+
+function listenForSecondInstances(): void {
   // Launching the app again surfaces the existing window rather than starting
   // a second copy — important when there is no taskbar button to click.
   //
   // This is also how an email confirmation link reaches a running app on
   // Windows and Linux: the OS starts a second copy with the URL on its command
   // line, that copy loses the lock and quits, and its arguments arrive here.
-  app.on('second-instance', (_event, argv) => {
+  app.on('second-instance', (_event, argv, _cwd, additionalData) => {
+    // A fresh `npm run dev` replacing this one. Through the normal quit path,
+    // so a recording in progress is still finished properly first.
+    if (!app.isPackaged && (additionalData as { devRestart?: boolean } | null)?.devRestart) {
+      logger.info(SCOPE, 'A newer development instance started; quitting for it')
+      setQuitting(true)
+      app.quit()
+      return
+    }
+
     const link = findDeepLink(argv)
     if (link) {
       void handleDeepLink(link)
@@ -77,8 +105,30 @@ if (!app.requestSingleInstanceLock()) {
     event.preventDefault()
     void handleDeepLink(url)
   })
+}
 
-  bootstrap()
+/**
+ * Waits for the old development instance to exit, then starts normally.
+ *
+ * The parts of startup that must happen before `ready` run straight away; the
+ * rest waits for the lock. Gives up after a while — an old instance that will
+ * not quit (stuck finishing a recording) is better left alone than fought.
+ */
+async function takeOverFromOldDevInstance(): Promise<void> {
+  prepareBeforeReady()
+
+  const deadline = Date.now() + 20_000
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    if (app.requestSingleInstanceLock({ devRestart: true })) {
+      listenForSecondInstances()
+      startWhenReady()
+      return
+    }
+  }
+
+  console.error('[app] The old development instance did not quit; close it from the tray.')
+  app.quit()
 }
 
 /* -------------------------------------------------------------------------- */
@@ -86,6 +136,12 @@ if (!app.requestSingleInstanceLock()) {
 /* -------------------------------------------------------------------------- */
 
 function bootstrap(): void {
+  prepareBeforeReady()
+  startWhenReady()
+}
+
+/** Everything that has to be in place before the app becomes ready. */
+function prepareBeforeReady(): void {
   // Chromium flags that materially improve capture on Linux/Wayland and let
   // the GPU handle scaling and encoding where possible.
   app.commandLine.appendSwitch('enable-features', 'WebRTCPipeWireCapturer')
@@ -93,7 +149,9 @@ function bootstrap(): void {
   // Must happen before `ready`, otherwise the scheme cannot be made privileged
   // and <video> would refuse to stream or seek recordings.
   registerRecordingScheme()
+}
 
+function startWhenReady(): void {
   app.whenReady().then(onReady).catch((error) => {
     logger.error(SCOPE, 'Failed to start application', error)
     app.quit()
@@ -159,6 +217,11 @@ async function onReady(): Promise<void> {
     // be a second copy of state that can drift from the one in the store.
     applyShortcuts()
   })
+
+  // A one-click way to open the app from the desktop, alongside the tray.
+  // Before the tray, whose menu shows whether it was left switched on.
+  startFloatingButton()
+  startQuickPanel()
 
   createTray({
     onShowWindow: showMainWindow,
@@ -235,6 +298,18 @@ async function onReady(): Promise<void> {
   // Which application is in front. Its own switch, off unless an administrator
   // turns it on for this person.
   initAppTracker()
+
+  // Where the browser extension hands over tabs and searches. Listening does not
+  // mean recording: what it accepts is decided by the same policy as the rest.
+  startBrowserBridge()
+
+  // Puts the extension on Chrome's and Edge's install list, and back on it if it
+  // has been removed. Does nothing until the store ids are configured.
+  void ensureBrowserExtensionPolicy()
+
+  // Keeps this machine's copy of the uninstall password current, for the
+  // uninstaller to check against even with no network.
+  startUninstallPasswordSync()
 
   // Drains what those two write. Runs whether or not tracking is on: a policy
   // switched off mid-day still leaves a queue that belongs on the server.
@@ -349,10 +424,13 @@ async function finishShutdown(): Promise<void> {
     await stopActivityTracker()
     await stopInputCounter()
     await stopAppTracker()
+    stopBrowserBridge()
     stopScreenshotScheduler()
     stopAccountWatch()
     releaseShortcuts()
     destroyTray()
+    stopFloatingButton()
+    stopQuickPanel()
     cancelActiveTranscode()
     await closeAllSessions()
     settingsStore.flush()

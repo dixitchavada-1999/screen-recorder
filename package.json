@@ -1,6 +1,6 @@
 {
   "name": "screen-recorder",
-  "version": "1.4.1",
+  "version": "1.4.3",
   "description": "Lightweight OBS-like cross-platform screen recorder built with Electron, React, TypeScript and FFmpeg",
   "author": {
     "name": "Screen Recorder",
@@ -18,6 +18,8 @@
     "typecheck:web": "tsc -p tsconfig.web.json --noEmit",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "icon": "node scripts/generate-icon.mjs",
+    "pack:extension": "node scripts/pack-extension.mjs",
+    "uninstall-password": "node scripts/set-uninstall-password.mjs",
     "build": "npm run typecheck && electron-vite build",
     "prepack:dir": "npm run icon",
     "prebuild:win": "npm run icon && node scripts/fetch-whisper.mjs",

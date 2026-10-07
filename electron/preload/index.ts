@@ -98,13 +98,26 @@ const api: RecorderApi = {
     people: () => ipcRenderer.invoke(IPC.TRACKING_PEOPLE),
     setPolicy: (
       userId: string,
-      patch: { trackingEnabled?: boolean; screenshotsEnabled?: boolean; appsEnabled?: boolean }
+      patch: { trackingEnabled?: boolean; screenshotsEnabled?: boolean; appsEnabled?: boolean; browserEnabled?: boolean }
     ) => ipcRenderer.invoke(IPC.TRACKING_SET_POLICY, userId, patch),
     day: (userId: string, from: string, to: string) =>
       ipcRenderer.invoke(IPC.TRACKING_DAY, userId, from, to),
     schedule: () => ipcRenderer.invoke(IPC.TRACKING_SCHEDULE),
     setSchedule: (patch: Partial<TrackingSchedule>) =>
       ipcRenderer.invoke(IPC.TRACKING_SET_SCHEDULE, patch)
+  },
+
+  devices: {
+    this: () => ipcRenderer.invoke(IPC.DEVICES_THIS),
+    canManage: () => ipcRenderer.invoke(IPC.DEVICES_CAN_MANAGE),
+    listUntracked: () => ipcRenderer.invoke(IPC.DEVICES_UNTRACKED_LIST),
+    addUntracked: (machineId: string, label: string | null) =>
+      ipcRenderer.invoke(IPC.DEVICES_UNTRACKED_ADD, machineId, label),
+    removeUntracked: (machineIds: string[]) =>
+      ipcRenderer.invoke(IPC.DEVICES_UNTRACKED_REMOVE, machineIds),
+    uninstallPasswordInfo: () => ipcRenderer.invoke(IPC.UNINSTALL_PASSWORD_INFO),
+    setUninstallPassword: (password: string) =>
+      ipcRenderer.invoke(IPC.UNINSTALL_PASSWORD_SET, password)
   },
 
   roster: {
@@ -244,6 +257,12 @@ const api: RecorderApi = {
       ipcRenderer.invoke(IPC.WINDOW_EXCLUDE_FROM_CAPTURE, excluded),
     onShown: (listener) => subscribe<void>(IPC.EVENT_WINDOW_SHOWN, listener),
     onOpenSection: (listener) => subscribe<string>(IPC.EVENT_OPEN_SECTION, listener)
+  },
+
+  panel: {
+    hide: () => ipcRenderer.send(IPC.PANEL_HIDE),
+    openApp: (section?: string) => ipcRenderer.send(IPC.PANEL_OPEN_APP, section),
+    onShown: (listener) => subscribe<void>(IPC.EVENT_PANEL_SHOWN, listener)
   },
 
   tray: {
