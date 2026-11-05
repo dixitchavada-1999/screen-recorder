@@ -10,6 +10,8 @@ import type {
   PermissionKind,
   ProcessingProgress,
   RecorderStateSync,
+  RecurrenceScope,
+  ScheduledCall,
   ScheduledCallInput,
   ScheduledCallRange,
   ScheduledCallStatus,
@@ -191,6 +193,8 @@ const api: RecorderApi = {
     setStatus: (id: string, status: ScheduledCallStatus) =>
       ipcRenderer.invoke(IPC.CALLS_SET_STATUS, id, status),
     remove: (id: string) => ipcRenderer.invoke(IPC.CALLS_DELETE, id),
+    removeInScope: (call: ScheduledCall, scope: RecurrenceScope) =>
+      ipcRenderer.invoke(IPC.CALLS_DELETE_SCOPE, call, scope),
     onReminder: (listener) => subscribe<CallReminder>(IPC.EVENT_CALL_REMINDER, listener)
   },
 

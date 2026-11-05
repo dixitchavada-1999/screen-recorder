@@ -3,7 +3,7 @@ import { IPC } from '@shared/ipc'
 import type { CallReminder, ScheduledCall } from '@shared/types'
 import { logger } from '../lib/logger'
 import { currentUser } from './auth'
-import { listCalls, markMissedCalls } from './calls'
+import { listCalls, markMissedCalls, rollForwardSeries } from './calls'
 import { settingsStore } from './settings-store'
 import { showMainWindow } from '../window'
 
@@ -105,6 +105,10 @@ export async function refreshReminders(): Promise<void> {
     // settings say — somebody who has turned reminders off still wants their
     // Call Manager to be right.
     await sweepMissed()
+
+    // Keep endless recurring series materialised ahead of time. Cheap: it only
+    // touches a series whose window is running low, and does nothing otherwise.
+    await rollForwardSeries()
 
     const { notifications } = settingsStore.get()
 

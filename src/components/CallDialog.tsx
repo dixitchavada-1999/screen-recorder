@@ -1,13 +1,18 @@
 import { useEffect, useId, useMemo, useState } from 'react'
 import type {
+  RecurrenceScope,
   RosterPerson,
   ScheduledCall,
   ScheduledCallInput,
   ScheduledCallStatus
 } from '@shared/types'
+import type { RecurrenceRule } from '@shared/recurrence'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
 import { Select } from '@/components/ui/Controls'
+import { DatePicker } from '@/components/ui/DatePicker'
+import { TimePicker } from '@/components/ui/TimePicker'
+import { RecurrencePicker } from '@/components/RecurrencePicker'
 import { useAuth } from '@/context/AuthContext'
 import { useRoster } from '@/hooks/useRoster'
 import { cn } from '@/utils/cn'
@@ -26,7 +31,8 @@ interface CallDialogProps {
   saving: boolean
   onClose: () => void
   onSave: (input: ScheduledCallInput) => Promise<void>
-  onDelete: (() => Promise<void>) | null
+  /** Deletes the call. The scope only matters for a recurring one. */
+  onDelete: ((scope: RecurrenceScope) => Promise<void>) | null
   /**
    * Open for reading only. Somebody on a call who did not arrange it — and is
    * not a super admin — may look at its details but change nothing, so the
@@ -62,6 +68,10 @@ export function CallDialog({
   const [duration, setDuration] = useState<number>(DEFAULT_MINUTES)
   const [notes, setNotes] = useState('')
   const [status, setStatus] = useState<ScheduledCallStatus>('scheduled')
+  /** How a new call repeats. Null is a one-off; only offered when creating. */
+  const [recurrence, setRecurrence] = useState<RecurrenceRule | null>(null)
+  /** Shows the "This / following / all" choice when deleting a recurring call. */
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
   /**
    * Whose call it is, by Nexus id.
    *
@@ -77,6 +87,13 @@ export function CallDialog({
   const roster = useRoster()
   const { user } = useAuth()
 
+  // What the recurrence presets read their weekday/day off. Falls back to the
+  // slot that was clicked while the date field is being typed.
+  const anchorDate = useMemo(() => {
+    const parsed = new Date(`${date}T${time}`)
+    return Number.isNaN(parsed.getTime()) ? defaultStart : parsed
+  }, [date, time, defaultStart])
+
   // Re-seed each time the dialog opens, from the call being edited or from the
   // slot that was clicked.
   useEffect(() => {
@@ -90,6 +107,8 @@ export function CallDialog({
     setDuration(call?.durationMinutes ?? DEFAULT_MINUTES)
     setNotes(call?.notes ?? '')
     setStatus(call?.status ?? 'scheduled')
+    setRecurrence(null)
+    setConfirmingDelete(false)
 
     // The server marks one assignee primary; that is the owner, and everybody
     // else is joining.
@@ -135,7 +154,10 @@ export function CallDialog({
          * server fills it in, which is also what happens on a machine whose
          * account has not been linked yet.
          */
-        assigneeNexusIds: buildAssignees(owner || user?.nexusUserId || '', joining)
+        assigneeNexusIds: buildAssignees(owner || user?.nexusUserId || '', joining),
+        // Recurrence is only applied when scheduling a new call; editing an
+        // occurrence never rewrites the series.
+        recurrence: call ? undefined : recurrence
       })
       onClose()
     } catch (caught) {
@@ -153,13 +175,48 @@ export function CallDialog({
           <Button variant="ghost" onClick={onClose}>
             Close
           </Button>
+        ) : onDelete && confirmingDelete && call?.seriesId ? (
+          // A recurring call: the footer becomes a focused "what to delete"
+          // choice, so the three scopes are not crammed against Save/Cancel.
+          <div className="flex w-full flex-wrap items-center gap-1.5">
+            <span className="mr-1 text-xs font-medium text-muted">Delete</span>
+            <Button
+              variant="danger"
+              size="sm"
+              disabled={saving}
+              onClick={() => void onDelete('this').then(onClose)}
+            >
+              This event
+            </Button>
+            <Button
+              variant="danger"
+              size="sm"
+              disabled={saving}
+              onClick={() => void onDelete('all').then(onClose)}
+            >
+              All events
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="ml-auto"
+              disabled={saving}
+              onClick={() => setConfirmingDelete(false)}
+            >
+              Keep
+            </Button>
+          </div>
         ) : (
           <>
             {onDelete && (
               <Button
                 variant="danger"
                 disabled={saving}
-                onClick={() => void onDelete().then(onClose)}
+                onClick={() =>
+                  call?.seriesId
+                    ? setConfirmingDelete(true)
+                    : void onDelete('this').then(onClose)
+                }
                 className="mr-auto"
               >
                 Delete
@@ -219,23 +276,33 @@ export function CallDialog({
 
         <div className="grid gap-3 sm:grid-cols-2">
           <LabelledField label="Date">
-            <input
-              type="date"
-              value={date}
-              onChange={(event) => setDate(event.target.value)}
-              className={inputClass}
-            />
+            <DatePicker value={date} onChange={setDate} disabled={readOnly} />
           </LabelledField>
 
           <LabelledField label="Time">
-            <input
-              type="time"
-              value={time}
-              onChange={(event) => setTime(event.target.value)}
-              className={inputClass}
-            />
+            <TimePicker value={time} onChange={setTime} disabled={readOnly} />
           </LabelledField>
         </div>
+
+        {/* Repeat is a property of a new call; editing an occurrence does not
+            reshape the series, so it is offered only when creating one. */}
+        {!call && (
+          <LabelledField label="Repeat">
+            <RecurrencePicker
+              anchor={anchorDate}
+              value={recurrence}
+              onChange={setRecurrence}
+              disabled={readOnly}
+            />
+          </LabelledField>
+        )}
+
+        {call?.seriesId && (
+          <p className="rounded-xl border border-hairline bg-surface px-3 py-2 text-[11px] text-faint">
+            This call repeats. Changes here affect only this occurrence; use Delete to remove the
+            series or the calls that follow.
+          </p>
+        )}
 
         {/*
           Only offered on an existing call: a new one is scheduled by
@@ -372,7 +439,7 @@ function PeoplePicker({
     onChange(selected.filter((id) => id !== nexusId))
 
   return (
-    <div className="rounded-xl border border-hairline bg-surface p-2">
+    <div className="relative rounded-xl border border-hairline bg-surface p-2">
       {selected.length === 0 ? (
         <p className="px-1 py-1 text-xs text-faint">
           Nobody else — just the person whose call it is.
@@ -416,14 +483,16 @@ function PeoplePicker({
         className="h-8 w-full rounded-lg border border-hairline bg-canvas-elevated px-2 text-xs text-ink transition-colors focus:border-accent focus:outline-none"
       />
 
+      {/* Floats over the fields below instead of pushing them down, so adding
+          someone does not grow the whole dialog. */}
       {matches.length > 0 && (
-        <ul className="mt-1.5 max-h-40 overflow-y-auto">
+        <ul className="absolute inset-x-0 top-full z-50 mt-1 max-h-48 overflow-y-auto rounded-xl border border-hairline bg-canvas-elevated p-1 shadow-xl shadow-black/40">
           {matches.map((person) => (
             <li key={person.nexusId}>
               <button
                 type="button"
                 onClick={() => add(person.nexusId)}
-                className="w-full truncate rounded-lg px-2 py-1.5 text-left text-xs text-ink transition-colors hover:bg-accent/15 hover:text-accent-strong"
+                className="w-full truncate rounded-lg px-2.5 py-1.5 text-left text-xs text-ink transition-colors hover:bg-accent/15 hover:text-accent-strong"
               >
                 {person.name}
               </button>
@@ -433,7 +502,9 @@ function PeoplePicker({
       )}
 
       {open && search.trim() && matches.length === 0 && (
-        <p className="mt-1.5 px-2 text-[11px] text-faint">Nobody by that name.</p>
+        <p className="absolute inset-x-0 top-full z-50 mt-1 rounded-xl border border-hairline bg-canvas-elevated px-3 py-2 text-[11px] text-faint shadow-xl shadow-black/40">
+          Nobody by that name.
+        </p>
       )}
 
       {!loading && people.length === 0 && (

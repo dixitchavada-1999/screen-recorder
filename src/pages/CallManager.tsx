@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import type { CallScope, ScheduledCall, ScheduledCallInput } from '@shared/types'
+import type { CallScope, RecurrenceScope, ScheduledCall, ScheduledCallInput } from '@shared/types'
 import { CallCalendar, dayKey } from '@/components/CallCalendar'
 import { CallDayView } from '@/components/CallDayView'
 import { CallDialog } from '@/components/CallDialog'
@@ -111,7 +111,7 @@ export function CallManager(): React.JSX.Element {
     syncAndRefresh,
     create,
     update,
-    remove
+    removeInScope
   } = useScheduledCalls(range, scope)
 
   // Email → colour, so an imported call can show which calendar it came from.
@@ -155,10 +155,13 @@ export function CallManager(): React.JSX.Element {
     }
   }
 
-  const handleDelete = async (): Promise<void> => {
+  const handleDelete = async (scope: RecurrenceScope): Promise<void> => {
     if (!editing) return
-    await remove(editing.id)
-    push({ tone: 'info', title: 'Call removed' })
+    await removeInScope(editing, scope)
+    push({
+      tone: 'info',
+      title: editing.seriesId && scope !== 'this' ? 'Recurring calls removed' : 'Call removed'
+    })
   }
 
   /** The arrows step by whatever the current view shows. */

@@ -22,6 +22,7 @@ import type {
   ProcessingProgress,
   RecorderStateSync,
   RecordingEntry,
+  RecurrenceScope,
   RosterPerson,
   ScheduledCall,
   ScheduledCallInput,
@@ -341,6 +342,12 @@ export interface RecorderApi {
      */
     setStatus(id: string, status: ScheduledCallStatus): Promise<IpcResult<ScheduledCall>>
     remove(id: string): Promise<IpcResult<void>>
+    /**
+     * Deletes a call at the chosen scope. For a recurring call this is "this
+     * occurrence", "this and following", or "the whole series"; for a one-off
+     * it deletes the single call whatever the scope.
+     */
+    removeInScope(call: ScheduledCall, scope: RecurrenceScope): Promise<IpcResult<void>>
     /**
      * Fired when a call is about to start, according to the lead times in
      * Settings. The main process shows the OS notification itself; this is the

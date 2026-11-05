@@ -2,12 +2,15 @@ import type { PostgrestError } from '@supabase/supabase-js'
 import type {
   CallAssignee,
   CallScope,
+  RecurrenceScope,
   RosterPerson,
   ScheduledCall,
   ScheduledCallInput,
   ScheduledCallRange,
   ScheduledCallStatus
 } from '@shared/types'
+import type { RecurrenceRule } from '@shared/recurrence'
+import { expandOccurrences } from '@shared/recurrence'
 import { AppError, ERROR_CODES } from '../lib/errors'
 import { logger } from '../lib/logger'
 import { currentNexusId, currentUser, getSupabase } from './auth'
@@ -22,7 +25,7 @@ const SCOPE = 'calls'
  */
 const COLUMNS =
   'id, user_id, title, starts_at, duration_minutes, notes, status, created_at, ' +
-  'google_event_id, google_account_email, ' +
+  'google_event_id, google_account_email, series_id, ' +
   'scheduled_call_assignees ( nexus_id, is_primary, nexus_users ( name ) )'
 
 /**
@@ -46,6 +49,7 @@ interface CallRow {
   created_at: string
   google_event_id: string | null
   google_account_email: string | null
+  series_id: string | null
   scheduled_call_assignees:
     | Array<{ nexus_id: string; is_primary: boolean; nexus_users: { name: string } | null }>
     | null
@@ -109,10 +113,20 @@ function canManageCalls(): boolean {
   return user.fullAccess || user.permissions.includes('calendar.view_all')
 }
 
+/** How far ahead occurrences of an endless series are kept materialised. */
+const HORIZON_DAYS = 180
+/** Safety cap on occurrences generated in one pass, whatever the rule. */
+const OCCURRENCE_CAP = 1000
+
 export async function createCall(input: ScheduledCallInput): Promise<ScheduledCall> {
   const user = requireUser()
   const fields = validate(input)
   const assignees = resolveAssignees(input.assigneeNexusIds)
+
+  // A recurring call is a whole series, materialised in one transaction.
+  if (input.recurrence) {
+    return createSeries(fields, assignees, input.recurrence)
+  }
 
   const { data, error } = await getSupabase()
     .from('scheduled_calls')
@@ -140,6 +154,202 @@ export async function createCall(input: ScheduledCallInput): Promise<ScheduledCa
 
   logger.info(SCOPE, 'Call scheduled', { startsAt: fields.starts_at, people: assignees.length })
   return await readCall(id)
+}
+
+/* -------------------------------------------------------------------------- */
+/*                              Recurring series                              */
+/* -------------------------------------------------------------------------- */
+
+/** The moment occurrences are generated up to from now. */
+function horizonFromNow(): Date {
+  return new Date(Date.now() + HORIZON_DAYS * 24 * 60 * 60 * 1000)
+}
+
+/** Assignee ids to the `[{ nexus_id, is_primary }]` shape the series stores. */
+function assigneeRows(nexusIds: string[]): Array<{ nexus_id: string; is_primary: boolean }> {
+  return nexusIds.map((id, index) => ({ nexus_id: id, is_primary: index === 0 }))
+}
+
+/**
+ * Materialises a recurring call: a series row plus one scheduled_calls row per
+ * occurrence, all written by `create_call_series` in a single transaction. The
+ * first occurrence (the anchor) is read back and returned, so the caller sees
+ * the same shape it would from an ordinary create.
+ */
+async function createSeries(
+  fields: ReturnType<typeof validate>,
+  assignees: string[],
+  rule: RecurrenceRule
+): Promise<ScheduledCall> {
+  const horizon = horizonFromNow()
+  const occurrences = expandOccurrences(fields.starts_at, rule, {
+    horizonEnd: horizon,
+    limit: OCCURRENCE_CAP
+  })
+
+  if (occurrences.length === 0) {
+    throw new AppError(
+      ERROR_CODES.UNKNOWN,
+      'That repeat produced no dates.',
+      'Check the end date — it may be before the first call.'
+    )
+  }
+
+  // For a bounded rule the watermark is its last date; for an endless one it is
+  // the horizon, which the roll-forward moves on from.
+  const last = occurrences[occurrences.length - 1]!
+  const generatedUntil =
+    rule.end.type === 'never' ? horizon.toISOString() : last
+
+  const { data, error } = await getSupabase().rpc('create_call_series', {
+    p_title: fields.title,
+    p_duration_minutes: fields.duration_minutes,
+    p_notes: fields.notes,
+    p_rule: rule,
+    p_anchor: fields.starts_at,
+    p_assignees: assigneeRows(assignees),
+    p_occurrences: occurrences,
+    p_generated_until: generatedUntil
+  })
+
+  if (error) throw translate(error, 'schedule the recurring call')
+
+  const seriesId = data as string
+  logger.info(SCOPE, 'Recurring call scheduled', {
+    seriesId,
+    occurrences: occurrences.length,
+    freq: rule.freq
+  })
+
+  // The anchor is the earliest occurrence; hand that back as the created call.
+  const { data: first, error: readError } = await getSupabase()
+    .from('scheduled_calls')
+    .select(COLUMNS)
+    .eq('series_id', seriesId)
+    .order('starts_at')
+    .limit(1)
+    .single()
+
+  if (readError) throw translate(readError, 'read the recurring call back')
+  return toScheduledCall(first as unknown as CallRow)
+}
+
+/**
+ * Deletes a recurring call at the scope the user chose.
+ *
+ *  - `this`      — only this occurrence, leaving the rest of the series.
+ *  - `following` — this occurrence and every later one, and the series stops
+ *                  rolling forward past it.
+ *  - `all`       — the whole series; the series row cascades to every occurrence.
+ *
+ * A one-off call (no series) is always deleted outright, whatever the scope.
+ */
+export async function deleteCallInScope(call: ScheduledCall, scope: RecurrenceScope): Promise<void> {
+  requireUser()
+
+  if (!call.seriesId || scope === 'this') {
+    await deleteCall(call.id)
+    return
+  }
+
+  if (scope === 'all') {
+    const { error } = await getSupabase().from('call_series').delete().eq('id', call.seriesId)
+    if (error) throw translate(error, 'delete the recurring calls')
+    logger.info(SCOPE, 'Recurring series deleted', { seriesId: call.seriesId })
+    return
+  }
+
+  // following: drop this occurrence and every later one, then stop the series
+  // generating more. If that removed everything, the series row goes too.
+  const { error: delError } = await getSupabase()
+    .from('scheduled_calls')
+    .delete()
+    .eq('series_id', call.seriesId)
+    .gte('starts_at', call.startsAt)
+
+  if (delError) throw translate(delError, 'delete the following calls')
+
+  const { count } = await getSupabase()
+    .from('scheduled_calls')
+    .select('id', { count: 'exact', head: true })
+    .eq('series_id', call.seriesId)
+
+  if (!count) {
+    await getSupabase().from('call_series').delete().eq('id', call.seriesId)
+    logger.info(SCOPE, 'Recurring series ended and removed', { seriesId: call.seriesId })
+    return
+  }
+
+  // Cap the watermark so the roll-forward never re-adds the deleted tail.
+  await getSupabase()
+    .from('call_series')
+    .update({ generated_until: call.startsAt })
+    .eq('id', call.seriesId)
+
+  logger.info(SCOPE, 'Recurring series truncated', { seriesId: call.seriesId, from: call.startsAt })
+}
+
+/* -------------------------------------------------------------------------- */
+/*                               Roll-forward                                 */
+/* -------------------------------------------------------------------------- */
+
+interface SeriesRow {
+  id: string
+  rule: RecurrenceRule
+  anchor_at: string
+  generated_until: string
+}
+
+/**
+ * Extends every endless series whose materialised window is running out.
+ *
+ * Re-expands each rule from its anchor to a fresh horizon and hands the dates
+ * past the current watermark to `extend_call_series`, which dedupes and inserts.
+ * Called on sign-in and on a daily interval; never throws so a bad series cannot
+ * stop the rest.
+ */
+export async function rollForwardSeries(): Promise<void> {
+  if (!currentUser()) return
+
+  const horizon = horizonFromNow()
+  // Only bother once the window has less than two-thirds left to run.
+  const dueBefore = new Date(Date.now() + (HORIZON_DAYS * 2) / 3 * 24 * 60 * 60 * 1000).toISOString()
+
+  const { data, error } = await getSupabase()
+    .from('call_series')
+    .select('id, rule, anchor_at, generated_until')
+    .lt('generated_until', dueBefore)
+
+  if (error) {
+    logger.warn(SCOPE, 'Could not read series to extend', error)
+    return
+  }
+
+  for (const series of (data ?? []) as SeriesRow[]) {
+    // A bounded rule stops on its own; nothing to roll forward.
+    if (series.rule.end?.type !== 'never') continue
+
+    try {
+      const watermark = new Date(series.generated_until).getTime()
+      const fresh = expandOccurrences(series.anchor_at, series.rule, {
+        horizonEnd: horizon,
+        limit: OCCURRENCE_CAP
+      }).filter((iso) => new Date(iso).getTime() > watermark)
+
+      if (fresh.length === 0) continue
+
+      const { error: extendError } = await getSupabase().rpc('extend_call_series', {
+        p_series: series.id,
+        p_occurrences: fresh,
+        p_generated_until: horizon.toISOString()
+      })
+
+      if (extendError) throw extendError
+      logger.info(SCOPE, 'Series extended', { seriesId: series.id, added: fresh.length })
+    } catch (caught) {
+      logger.warn(SCOPE, 'Could not extend a series', { seriesId: series.id, error: caught })
+    }
+  }
 }
 
 export async function updateCall(
@@ -563,6 +773,7 @@ function toScheduledCall(row: CallRow): ScheduledCall {
     createdAt: row.created_at,
     googleEventId: row.google_event_id,
     googleAccountEmail: row.google_account_email,
+    seriesId: row.series_id,
     assignees,
     scheduledByMe: me !== null && row.user_id === me.id,
     assignedToMe:

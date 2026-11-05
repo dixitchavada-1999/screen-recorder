@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import type {
   CallScope,
   GoogleCalendarSyncResult,
+  RecurrenceScope,
   ScheduledCall,
   ScheduledCallInput,
   ScheduledCallRange,
@@ -24,6 +25,8 @@ interface UseScheduledCallsResult {
   create: (input: ScheduledCallInput) => Promise<void>
   update: (id: string, input: ScheduledCallInput) => Promise<void>
   remove: (id: string) => Promise<void>
+  /** Deletes a call at a recurrence scope (this / following / all). */
+  removeInScope: (call: ScheduledCall, scope: RecurrenceScope) => Promise<void>
 }
 
 /**
@@ -145,6 +148,12 @@ export function useScheduledCalls(
     [mutate]
   )
 
+  const removeInScope = useCallback(
+    (call: ScheduledCall, scope: RecurrenceScope) =>
+      mutate(() => unwrap(window.api.calls.removeInScope(call, scope))),
+    [mutate]
+  )
+
   return {
     calls,
     loading,
@@ -156,6 +165,7 @@ export function useScheduledCalls(
     syncAndRefresh,
     create,
     update,
-    remove
+    remove,
+    removeInScope
   }
 }

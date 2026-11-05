@@ -123,6 +123,7 @@ export const IPC = {
   /** Changes only the status, leaving the rest of the call untouched. */
   CALLS_SET_STATUS: 'calls:set-status',
   CALLS_DELETE: 'calls:delete',
+  CALLS_DELETE_SCOPE: 'calls:delete-scope',
 
   /** The local MCP server that lets this employee's Claude manage their calls. */
   MCP_GET_STATUS: 'mcp:get-status',

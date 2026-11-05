@@ -25,6 +25,8 @@ import type {
   PermissionInfo,
   PermissionKind,
   RecorderStateSync,
+  RecurrenceScope,
+  ScheduledCall,
   ScheduledCallInput,
   ScheduledCallRange,
   ScheduledCallStatus,
@@ -40,6 +42,7 @@ import { handled } from '../lib/errors'
 import { logger } from '../lib/logger'
 import {
   currentUser,
+  hasStoredSession,
   refreshAccount,
   restoreSession,
   signIn,
@@ -49,6 +52,7 @@ import {
 import {
   createCall,
   deleteCall,
+  deleteCallInScope,
   deleteCallsFromGoogleAccount,
   listCalls,
   listRoster,
@@ -320,34 +324,81 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC.AUTH_SESSION,
     handled(SCOPE, async () => {
-      sessionRestore ??= restoreSession().then((restored) => {
-        // The reminder scheduler started before there was a session to read a
-        // schedule with. This is the first moment it can arm anything.
-        if (restored) void refreshReminders()
-        // And to catch up on meetings added in Google while the app was closed.
-        if (restored) void syncAhead()
-
-        /*
-         * And the first moment the tracking policy can be settled either way.
-         *
-         * Unconditional, unlike the line above. A restore that failed is the
-         * more interesting case: it means this machine is signed in but cannot
-         * reach the server, which is exactly when the policy falls back to the
-         * one it remembers. Refreshing only on success would leave an offline
-         * machine recording nothing until the next poll, or all day.
-         */
-        void refreshPolicy()
-        // And the first moment this person's chosen warnings can be put where
-        // the server can read them.
-        if (restored) void refreshReminderPrefs()
-        return restored
-      })
+      sessionRestore ??= restoreSession().then(afterRestore)
 
       await sessionRestore
       // Read through afterwards: by now a sign-in may have replaced it.
       return currentUser()
     })
   )
+
+  /** Everything that was waiting for a session, run once a restore has settled. */
+  function afterRestore(restored: AuthUser | null): AuthUser | null {
+    // The reminder scheduler started before there was a session to read a
+    // schedule with. This is the first moment it can arm anything.
+    if (restored) void refreshReminders()
+    // And to catch up on meetings added in Google while the app was closed.
+    if (restored) void syncAhead()
+
+    /*
+     * And the first moment the tracking policy can be settled either way.
+     *
+     * Unconditional, unlike the line above. A restore that failed is the
+     * more interesting case: it means this machine is signed in but cannot
+     * reach the server, which is exactly when the policy falls back to the
+     * one it remembers. Refreshing only on success would leave an offline
+     * machine recording nothing until the next poll, or all day.
+     */
+    void refreshPolicy()
+    // And the first moment this person's chosen warnings can be put where
+    // the server can read them.
+    if (restored) void refreshReminderPrefs()
+
+    if (restored) restoreRetryDelayMs = RESTORE_RETRY_FIRST_MS
+    else void retryRestoreLater()
+
+    return restored
+  }
+
+  /*
+   * A restore that failed for want of a network is tried again until it works.
+   *
+   * At login the app usually starts before Wi-Fi has connected, so the first
+   * restore fails and the token is kept for "the next try" — and there was no
+   * next try. The machine then sat signed out for the whole day: nothing was
+   * uploaded, and no change to the policy from an administrator could reach
+   * it, until somebody restarted the app or signed in again by hand.
+   */
+  const RESTORE_RETRY_FIRST_MS = 15_000
+  const RESTORE_RETRY_MAX_MS = 5 * 60_000
+  let restoreRetryDelayMs = RESTORE_RETRY_FIRST_MS
+  let restoreRetry: NodeJS.Timeout | null = null
+
+  async function retryRestoreLater(): Promise<void> {
+    if (restoreRetry !== null) return
+    // Never stored, or refused and thrown away: there is nothing to retry with.
+    if (currentUser() || !(await hasStoredSession())) return
+
+    const delay = restoreRetryDelayMs
+    restoreRetryDelayMs = Math.min(restoreRetryDelayMs * 2, RESTORE_RETRY_MAX_MS)
+
+    restoreRetry = setTimeout(() => {
+      restoreRetry = null
+      void (async () => {
+        // Signed in by hand in the meantime.
+        if (currentUser()) return
+
+        const restored = afterRestore(await restoreSession())
+        if (!restored) return
+
+        logger.info(SCOPE, 'Session restored on a later try')
+        // The window asked once, got nobody, and is showing the sign-in screen.
+        for (const window of BrowserWindow.getAllWindows()) {
+          if (!window.isDestroyed()) window.webContents.send(IPC.EVENT_AUTH_CHANGED, restored)
+        }
+      })()
+    }, delay)
+  }
 
   ipcMain.handle(
     IPC.AUTH_SIGN_IN,
@@ -806,6 +857,17 @@ export function registerIpcHandlers(): void {
       await deleteCall(id)
       void refreshReminders()
     })
+  )
+
+  ipcMain.handle(
+    IPC.CALLS_DELETE_SCOPE,
+    handled(
+      SCOPE,
+      async (_event: Electron.IpcMainInvokeEvent, call: ScheduledCall, scope: RecurrenceScope) => {
+        await deleteCallInScope(call, scope)
+        void refreshReminders()
+      }
+    )
   )
 
   ipcMain.handle(

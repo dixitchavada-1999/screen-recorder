@@ -6,6 +6,8 @@
  * all three bundles can consume it.
  */
 
+import type { RecurrenceRule } from './recurrence'
+
 /* -------------------------------------------------------------------------- */
 /*                                  Settings                                  */
 /* -------------------------------------------------------------------------- */
@@ -777,11 +779,16 @@ export interface RosterPerson {
  * for three colleagues appears in their day, not in the day of whoever set it
  * up — that person finds it under "Scheduled by me".
  */
+/** How a call can be deleted when it belongs to a recurring series. */
+export type RecurrenceScope = 'this' | 'following' | 'all'
+
 export interface ScheduledCall {
   id: string
   title: string
   /** ISO 8601 with offset. The UI renders it in local time. */
   startsAt: string
+  /** The recurring series this occurrence belongs to, or null for a one-off. */
+  seriesId: string | null
   durationMinutes: number
   notes: string
   status: ScheduledCallStatus
@@ -824,6 +831,13 @@ export interface ScheduledCallInput {
    * is.
    */
   assigneeNexusIds?: string[]
+  /**
+   * Makes this a recurring call. Null or absent is a one-off.
+   *
+   * Only read when creating: a new recurring call materialises a whole series.
+   * Editing an existing occurrence never changes the recurrence here.
+   */
+  recurrence?: RecurrenceRule | null
 }
 
 /**
